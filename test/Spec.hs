@@ -1,5 +1,4 @@
-import Data.Maybe (Maybe (..))
-import Calculus (Var, Expr (..), Type (..), Val (..), eval, inferType)
+import Calculus
 
 main :: IO ()
 main = do
@@ -17,6 +16,12 @@ main = do
     checkType (constFn "x" "y") (FnType "x" . FnType "y" $ VarType "x")
     checkType (Call (constFn "x" "y") two) (FnType "y" IntType)
     checkType (Call (Call (constFn "x" "y") two) one) IntType
+    checkTypeError (Call (identity "x") (Call one one)) (ArgError CalleeNotFn)
+    checkTypeError (Call one one) CalleeNotFn
+    checkTypeError (Call one (Call one one)) (CalleeNotFnAndArgError CalleeNotFn)
+    checkTypeError (Call (Call one one) one) (CalleeError CalleeNotFn)
+    checkTypeError (Call (Call one one) (Call one one)) (CalleeAndArgError CalleeNotFn CalleeNotFn)
+    checkTypeError (Call (identity "x") (Call (Call one one) one)) (ArgError (CalleeError CalleeNotFn))
 
 checkEval :: Expr -> Val -> IO ()
 checkEval expr expectedVal = print $ case (eval expr, expectedVal) of
@@ -24,7 +29,10 @@ checkEval expr expectedVal = print $ case (eval expr, expectedVal) of
     _ -> False
 
 checkType :: Expr -> Type -> IO ()
-checkType expr expectedType = print $ inferType expr == Just expectedType
+checkType expr expectedType = print $ inferType expr == Right expectedType
+
+checkTypeError :: Expr -> ErrorTree -> IO ()
+checkTypeError expr errorTree = print $ inferType expr == Left errorTree
 
 one :: Expr
 one = IntExpr 1
