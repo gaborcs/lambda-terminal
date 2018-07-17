@@ -4,16 +4,20 @@ import Data.Maybe
 import Brick
 import Graphics.Vty
 import Calculus
+import qualified Data.Map as Map
 
+data State = State ExprName Path
+type ExprName = String
 type Path = [ChildIndex]
 type ChildIndex = Int
 
 main :: IO ()
 main = do
-    defaultMain app []
+    defaultMain app initialState
     return ()
+    where initialState = State "main" []
 
-app :: App Path e String
+app :: App State e String
 app = App
     { appDraw = draw
     , appChooseCursor = neverShowCursor
@@ -21,11 +25,16 @@ app = App
     , appStartEvent = return
     , appAttrMap = const attributeMap }
 
-draw :: Path -> [Widget n]
-draw selectionPath = [ padBottom Max renderedExpr <=> str typeStr ] where
+draw :: State -> [Widget n]
+draw state = [ padBottom Max renderedExpr <=> str bottomStr ] where
+    State exprName selectionPath = state
+    expr = fromJust $ Map.lookup exprName namedExprs
     renderedExpr = renderExpr expr (Just selectionPath) maybeErrorTree
-    maybeErrorTree = either Just (const Nothing) (inferType expr)
-    typeStr = either (const "Type error") show (inferType selectedExpr)
+    maybeErrorTree = either Just (const Nothing) (inferTypeUnderEnv namedExprTypes expr)
+    bottomStr = case (inferTypeUnderEnv namedExprTypes selectedExpr, evalUnderEnv namedExprVals selectedExpr) of
+        (Right t, Just (IntVal v)) -> show v ++ ": " ++ show t
+        (Right t, _) -> show t
+        _ -> "Type error"
     selectedExpr = fromJust $ getSubExprAtPath expr selectionPath
 
 renderExpr :: Expr -> Maybe Path -> Maybe ErrorTree -> Widget n
@@ -61,22 +70,34 @@ getSubExprAtPath expr = foldl f (Just expr) where
             (Call _ arg, 1) -> Just arg
             _ -> Nothing
 
-expr :: Expr
-expr = Call (Call (Call (FnExpr "x" . FnExpr "y" $ VarExpr "x") (IntExpr 1)) (IntExpr 2)) (IntExpr 3)
+namedExprs :: Map.Map Var Expr
+namedExprs = Map.fromList
+    [ ("const", FnExpr "x" . FnExpr "y" $ VarExpr "x")
+    , ("main", Call (Call (Call (VarExpr "const") (IntExpr 1)) (IntExpr 2)) (IntExpr 3)) ]
 
-handleEvent :: Path -> BrickEvent n e -> EventM n (Next Path)
-handleEvent selectionPath event = case event of
-    VtyEvent (EvKey (KChar 'h') []) -> continue navUp
-    VtyEvent (EvKey (KChar 'j') []) -> continue navNext
-    VtyEvent (EvKey (KChar 'k') []) -> continue navPrev
-    VtyEvent (EvKey (KChar 'l') []) -> continue navDown
-    VtyEvent (EvKey (KChar 'q') []) -> halt selectionPath
-    _ -> continue selectionPath
+namedExprTypes :: Map.Map Var (Either ErrorTree Type)
+namedExprTypes = inferTypes namedExprs
+
+namedExprVals :: Map.Map Var (Maybe Val)
+namedExprVals = evalExprs namedExprs
+
+handleEvent :: State -> BrickEvent n e -> EventM n (Next State)
+handleEvent state event = case event of
+    VtyEvent (EvKey (KChar 'h') []) -> nav up
+    VtyEvent (EvKey (KChar 'j') []) -> nav next
+    VtyEvent (EvKey (KChar 'k') []) -> nav prev
+    VtyEvent (EvKey (KChar 'l') []) -> nav down
+    VtyEvent (EvKey KEnter []) -> continue goToDefinition
+    VtyEvent (EvKey (KChar 'q') []) -> halt state
+    _ -> continue state
     where
-        navUp = if null selectionPath then [] else init selectionPath
-        navNext = if isJust nextExpr then nextPath else selectionPath
-        navPrev = if isJust prevExpr then prevPath else selectionPath
-        navDown = if isJust firstChildOfSelected then pathToFirstChildOfSelected else selectionPath
+        State exprName selectionPath = state
+        expr = fromJust $ Map.lookup exprName namedExprs
+        nav = continue . State exprName
+        up = if null selectionPath then [] else init selectionPath
+        next = if isJust nextExpr then nextPath else selectionPath
+        prev = if isJust prevExpr then prevPath else selectionPath
+        down = if isJust firstChildOfSelected then pathToFirstChildOfSelected else selectionPath
         nextExpr = getExprAtPath nextPath
         nextPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath + 1]
         prevExpr = getExprAtPath prevPath
@@ -85,6 +106,9 @@ handleEvent selectionPath event = case event of
         firstChildOfSelected = getExprAtPath pathToFirstChildOfSelected
         pathToFirstChildOfSelected = selectionPath ++ [0]
         getExprAtPath = getSubExprAtPath expr
+        goToDefinition = case selectedExpr of
+            Just (VarExpr name) -> if Map.member name namedExprs then State name [] else state
+            _ -> state
 
 attributeMap :: AttrMap
 attributeMap = attrMap defAttr [ (errorAttr, fg red), (selectionAttr, withStyle defAttr bold) ]

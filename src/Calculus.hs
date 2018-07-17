@@ -1,5 +1,7 @@
 module Calculus where
 
+import Control.Monad
+import Data.Maybe
 import qualified Data.Map as Map
 
 type Var = String
@@ -14,24 +16,29 @@ data ErrorTree = CalleeNotFn
     | CalleeAndArgError ErrorTree ErrorTree
     deriving (Eq, Show)
 
-eval :: Expr -> Maybe Val
-eval = evalWithEnv Map.empty
+evalExprs :: Map.Map Var Expr -> Map.Map Var (Maybe Val)
+evalExprs exprs = evaluatedExprs where
+    evaluatedExprs = Map.map (evalUnderEnv evaluatedExprs) exprs
 
-evalWithEnv :: Map.Map Var Val -> Expr -> Maybe Val
-evalWithEnv env expr = case expr of
+evalUnderEnv :: Map.Map Var (Maybe Val) -> Expr -> Maybe Val
+evalUnderEnv env expr = case expr of
     IntExpr n -> Just $ IntVal n
-    FnExpr var body -> Just . FnVal $ \arg -> evalWithEnv (Map.insert var arg env) body
-    VarExpr var -> Map.lookup var env
-    Call callee arg -> case evalWithEnv env callee of
-        Just (FnVal f) -> evalWithEnv env arg >>= f
+    FnExpr var body -> Just . FnVal $ \arg -> evalUnderEnv (Map.insert var (Just arg) env) body
+    VarExpr var -> join $ Map.lookup var env
+    Call callee arg -> case evalUnderEnv env callee of
+        Just (FnVal f) -> evalUnderEnv env arg >>= f
         _ -> Nothing
 
-inferType :: Expr -> Either ErrorTree Type
-inferType expr = case expr of
+inferTypes :: Map.Map Var Expr -> Map.Map Var (Either ErrorTree Type)
+inferTypes exprs = types where
+    types = Map.map (inferTypeUnderEnv types) exprs
+
+inferTypeUnderEnv :: Map.Map Var (Either ErrorTree Type) -> Expr -> Either ErrorTree Type
+inferTypeUnderEnv env expr = case expr of
     IntExpr _ -> Right IntType
-    FnExpr var body -> FnType var <$> inferType body
-    VarExpr var -> Right $ VarType var
-    Call callee arg -> case (inferType callee, inferType arg) of
+    FnExpr var body -> FnType var <$> inferTypeUnderEnv env body
+    VarExpr var -> fromMaybe (Right $ VarType var) (Map.lookup var env)
+    Call callee arg -> case (inferTypeUnderEnv env callee, inferTypeUnderEnv env arg) of
         (Right (FnType var bodyType), Right argType) -> Right $ substituteVarType var argType bodyType
         (Right (FnType _ _), Left argError) -> Left $ ArgError argError
         (Right _, Right _) -> Left CalleeNotFn
