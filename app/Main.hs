@@ -83,10 +83,10 @@ namedExprVals = evalExprs namedExprs
 
 handleEvent :: State -> BrickEvent n e -> EventM n (Next State)
 handleEvent state event = case event of
-    VtyEvent (EvKey (KChar 'h') []) -> nav up
-    VtyEvent (EvKey (KChar 'j') []) -> nav next
-    VtyEvent (EvKey (KChar 'k') []) -> nav prev
-    VtyEvent (EvKey (KChar 'l') []) -> nav down
+    VtyEvent (EvKey KUp []) -> nav prev
+    VtyEvent (EvKey KDown []) -> nav next
+    VtyEvent (EvKey KLeft []) -> nav parent
+    VtyEvent (EvKey KRight []) -> nav child
     VtyEvent (EvKey KEnter []) -> continue goToDefinition
     VtyEvent (EvKey (KChar 'q') []) -> halt state
     _ -> continue state
@@ -94,10 +94,10 @@ handleEvent state event = case event of
         State exprName selectionPath = state
         expr = fromJust $ Map.lookup exprName namedExprs
         nav = continue . State exprName
-        up = if null selectionPath then [] else init selectionPath
-        next = if isJust nextExpr then nextPath else selectionPath
         prev = if isJust prevExpr then prevPath else selectionPath
-        down = if isJust firstChildOfSelected then pathToFirstChildOfSelected else selectionPath
+        next = if isJust nextExpr then nextPath else selectionPath
+        parent = if null selectionPath then [] else init selectionPath
+        child = if isJust firstChildOfSelected then pathToFirstChildOfSelected else selectionPath
         nextExpr = getExprAtPath nextPath
         nextPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath + 1]
         prevExpr = getExprAtPath prevPath
