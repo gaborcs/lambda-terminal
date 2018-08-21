@@ -3,13 +3,13 @@ module Main where
 import Data.Maybe
 import Brick
 import Graphics.Vty
-import Calculus
+import Eval
+import Infer
 import qualified Data.Map as Map
+import qualified Expr as E
+import qualified Value as V
 
-data State = State ExprName Path
-type ExprName = String
-type Path = [ChildIndex]
-type ChildIndex = Int
+data State = State E.ExprName E.Path
 
 main :: IO ()
 main = do
@@ -23,63 +23,58 @@ app = App
     , appChooseCursor = neverShowCursor
     , appHandleEvent = handleEvent
     , appStartEvent = return
-    , appAttrMap = const attributeMap }
+    , appAttrMap = const $ attrMap defAttr [] }
 
 draw :: State -> [Widget n]
 draw state = [ padBottom Max renderedExpr <=> str bottomStr ] where
     State exprName selectionPath = state
-    expr = fromJust $ Map.lookup exprName namedExprs
+    expr = fromJust $ Map.lookup exprName defs
     renderedExpr = renderExpr expr (Just selectionPath) maybeErrorTree
-    maybeErrorTree = either Just (const Nothing) (inferTypeUnderEnv namedExprTypes expr)
-    bottomStr = case (inferTypeUnderEnv namedExprTypes selectedExpr, evalUnderEnv namedExprVals selectedExpr) of
-        (Right t, Just (IntVal v)) -> show v ++ ": " ++ show t
+    maybeErrorTree = either Just (const Nothing) (inferType defs expr)
+    bottomStr = case (inferType defs selectedExpr, eval defs selectedExpr) of
+        (Right t, Just (V.Int v)) -> show v ++ ": " ++ show t
         (Right t, _) -> show t
         _ -> "Type error"
     selectedExpr = fromJust $ getSubExprAtPath expr selectionPath
 
-renderExpr :: Expr -> Maybe Path -> Maybe ErrorTree -> Widget n
-renderExpr expr maybeSelectionPath maybeErrorTree = if selected then highlight renderedExpr else renderedExpr where
+renderExpr :: E.Expr -> Maybe E.Path -> Maybe E.Path -> Widget n
+renderExpr expr maybeSelectionPath maybeErrorPath = highlightIfSelected renderedExpr where
+    highlightIfSelected = if selected then highlight else id
     selected = maybeSelectionPath == Just []
-    highlight = withAttr selectionAttr
+    highlight = modifyDefAttr $ flip withStyle bold
+    makeRedIfHasError = if hasError then makeRed else id
+    hasError = maybeErrorPath == Just []
+    makeRed = modifyDefAttr $ flip withForeColor red
     renderedExpr = case expr of
-        IntExpr n -> str $ show n
-        FnExpr var body -> str ('λ' : var) <=> (str "  " <+> renderExpr body (getChildSelectionPath 0) maybeErrorTree) where
-        VarExpr var -> str var
-        Call callee arg -> renderedCallee <=> (callSymbol <+> renderedArg) where
-            renderedCallee = renderExpr callee (getChildSelectionPath 0) maybeCalleeError
-            callSymbol = if canCallCallee then str "└ " else withAttr errorAttr (str "└ ")
-            renderedArg = renderExpr arg (getChildSelectionPath 1) maybeArgError
-    getChildSelectionPath index = case maybeSelectionPath of
-        Just (i:childSelectionPath) -> if i == index then Just childSelectionPath else Nothing
+        E.Ref exprName -> makeRedIfHasError $ str exprName
+        E.Var var -> makeRedIfHasError $ str var
+        E.Fn var body -> makeRedIfHasError $ str ('λ' : var) <=> (str "  " <+> renderedBody) where
+            renderedBody = renderExpr body (getChildSelectionPath 0) (getChildErrorPath 0)
+        E.Call callee arg -> renderedCallee <=> (callSymbol <+> renderedArg) where
+            renderedCallee = renderExpr callee (getChildSelectionPath 0) (getChildErrorPath 0)
+            callSymbol = makeRedIfHasError $ str "└ "
+            renderedArg = renderExpr arg (getChildSelectionPath 1) (getChildErrorPath 1)
+        E.Int n -> makeRedIfHasError . str $ show n
+    getChildSelectionPath = getChildPath maybeSelectionPath
+    getChildErrorPath = getChildPath maybeErrorPath
+    getChildPath maybePath index = case maybePath of
+        Just (i:childPath) -> if i == index then Just childPath else Nothing
         _ -> Nothing
-    (canCallCallee, maybeCalleeError, maybeArgError) = case maybeErrorTree of
-        Nothing -> (True, Nothing, Nothing)
-        Just CalleeNotFn -> (False, Nothing, Nothing)
-        Just (CalleeError calleeError) -> (True, Just calleeError, Nothing)
-        Just (ArgError argError) -> (True, Nothing, Just argError)
-        Just (CalleeNotFnAndArgError argError) -> (False, Nothing, Just argError)
-        Just (CalleeAndArgError calleeError argError) -> (True, Just calleeError, Just argError)
 
-getSubExprAtPath :: Expr -> Path -> Maybe Expr
+getSubExprAtPath :: E.Expr -> E.Path -> Maybe E.Expr
 getSubExprAtPath expr = foldl f (Just expr) where
     f maybeExpr edge = do
         expr <- maybeExpr
         case (expr, edge) of
-            (FnExpr _ body, 0) -> Just body
-            (Call callee _, 0) -> Just callee
-            (Call _ arg, 1) -> Just arg
+            (E.Fn _ body, 0) -> Just body
+            (E.Call callee _, 0) -> Just callee
+            (E.Call _ arg, 1) -> Just arg
             _ -> Nothing
 
-namedExprs :: Map.Map Var Expr
-namedExprs = Map.fromList
-    [ ("const", FnExpr "x" . FnExpr "y" $ VarExpr "x")
-    , ("main", Call (Call (Call (VarExpr "const") (IntExpr 1)) (IntExpr 2)) (IntExpr 3)) ]
-
-namedExprTypes :: Map.Map Var (Either ErrorTree Type)
-namedExprTypes = inferTypes namedExprs
-
-namedExprVals :: Map.Map Var (Maybe Val)
-namedExprVals = evalExprs namedExprs
+defs :: Map.Map E.ExprName E.Expr
+defs = Map.fromList
+    [ ("const", E.Fn "x" . E.Fn "y" $ E.Var "x")
+    , ("main", E.Call (E.Call (E.Call (E.Ref "const") (E.Int 1)) (E.Int 2)) (E.Int 3)) ]
 
 handleEvent :: State -> BrickEvent n e -> EventM n (Next State)
 handleEvent state event = case event of
@@ -92,7 +87,7 @@ handleEvent state event = case event of
     _ -> continue state
     where
         State exprName selectionPath = state
-        expr = fromJust $ Map.lookup exprName namedExprs
+        expr = fromJust $ Map.lookup exprName defs
         nav = continue . State exprName
         prev = if isJust prevExpr then prevPath else selectionPath
         next = if isJust nextExpr then nextPath else selectionPath
@@ -107,14 +102,5 @@ handleEvent state event = case event of
         pathToFirstChildOfSelected = selectionPath ++ [0]
         getExprAtPath = getSubExprAtPath expr
         goToDefinition = case selectedExpr of
-            Just (VarExpr name) -> if Map.member name namedExprs then State name [] else state
+            Just (E.Ref exprName) -> if Map.member exprName defs then State exprName [] else state
             _ -> state
-
-attributeMap :: AttrMap
-attributeMap = attrMap defAttr [ (errorAttr, fg red), (selectionAttr, withStyle defAttr bold) ]
-
-errorAttr :: AttrName
-errorAttr = attrName "error"
-
-selectionAttr :: AttrName
-selectionAttr = attrName "selection"
