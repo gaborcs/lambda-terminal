@@ -75,6 +75,7 @@ unify t1 t2 = case (t1, t2) of
         s1 <- unify a1 a2
         s2 <- unify (apply s1 b1) (apply s1 b2)
         return $ compose s1 s2
+    (T.Int, T.Int) -> Just Map.empty
     _ -> Nothing
 
 bind :: T.VarId -> T.Type -> Either InfiniteType Substitution
