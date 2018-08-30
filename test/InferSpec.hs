@@ -42,7 +42,12 @@ defs = Map.fromList
     , ("unboundVar", E.Var "unbound") ]
 
 hasType :: E.Expr -> T.Type -> Expectation
-hasType expr t = inferType defs expr `shouldBe` Right t
+hasType expr t = indexTVarsFromZero <$> maybeType `shouldBe` Just t where
+    (_, maybeType) = inferType defs expr []
+
+indexTVarsFromZero :: T.Type -> T.Type
+indexTVarsFromZero t = apply (Map.fromList $ zip (typeVars t) (T.Var <$> [0..])) t
 
 failsAtPath :: E.Expr -> ErrorPath -> Expectation
-failsAtPath expr errorPath = inferType defs expr `shouldBe` Left errorPath
+failsAtPath expr errorPath = maybeErrorPath `shouldBe` Just errorPath where
+    (maybeErrorPath, _) = inferType defs expr []

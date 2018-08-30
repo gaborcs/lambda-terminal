@@ -29,11 +29,11 @@ draw :: State -> [Widget n]
 draw state = [ padBottom Max renderedExpr <=> str bottomStr ] where
     State exprName selectionPath = state
     expr = fromJust $ Map.lookup exprName defs
-    renderedExpr = renderExpr expr (Just selectionPath) maybeErrorTree
-    maybeErrorTree = either Just (const Nothing) (inferType defs expr)
-    bottomStr = case (inferType defs selectedExpr, eval defs selectedExpr) of
-        (Right t, Just (V.Int v)) -> show v ++ ": " ++ show t
-        (Right t, _) -> show t
+    renderedExpr = renderExpr expr (Just selectionPath) maybeErrorPath
+    (maybeErrorPath, maybeSelectionType) = inferType defs expr selectionPath
+    bottomStr = case (maybeSelectionType, eval defs selectedExpr) of
+        (Just t, Just (V.Int v)) -> show v ++ ": " ++ show t
+        (Just t, _) -> show t
         _ -> "Type error"
     selectedExpr = fromJust $ getSubExprAtPath expr selectionPath
 

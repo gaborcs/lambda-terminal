@@ -12,54 +12,72 @@ type NextTVarId = T.VarId
 type Substitution = Map.Map T.VarId T.Type
 data InfiniteType = InfiniteType
 
-inferType :: Map.Map E.ExprName E.Expr -> E.Expr -> Either ErrorPath T.Type
-inferType defs expr = do
-    let firstTVarId = 0
-    (t, _) <- evalState (inferType' (Map.map Right defs) Map.empty expr) firstTVarId
-    let indexTypeVarsFromZero = apply . Map.fromList $ zip (typeVars t) (T.Var <$> [0..])
-    return $ indexTypeVarsFromZero t
+inferType :: Map.Map E.ExprName E.Expr -> E.Expr -> E.Path -> (Maybe ErrorPath, Maybe T.Type)
+inferType defs expr path = (maybeErrorPath, maybeTypeAtPath) where
+    maybeErrorPath = either Just (const Nothing) eitherErrorOrSolution
+    (eitherErrorOrSolution, maybeTypeAtPath) = evalState (inferType' (Map.map Right defs) Map.empty expr path) firstTVarId
+    firstTVarId = 0
 
 inferType' ::
     Map.Map E.ExprName (Either T.Type E.Expr)
     -> TypeEnv
     -> E.Expr
-    -> State NextTVarId (Either ErrorPath (T.Type, Substitution))
-inferType' defs env expr = case expr of
+    -> E.Path
+    -> State NextTVarId (Either ErrorPath (T.Type, Substitution), Maybe T.Type)
+inferType' defs env expr path = case expr of
     E.Ref ref -> case Map.lookup ref defs of
         Just (Right expr) -> do
             tv <- freshTVar
-            inferResult <- inferType' (Map.insert ref (Left tv) defs) env expr
-            return $ case inferResult of
+            (eitherErrorOrSolution, _) <- inferType' (Map.insert ref (Left tv) defs) env expr []
+            return $ case eitherErrorOrSolution of
                 Right (t, s1) -> case unify (apply s1 tv) t of
-                    Just s2 -> Right (apply s2 t, compose s2 s1)
-                    Nothing -> Left []
-                Left _ -> Left []
-        Just (Left t) -> return $ Right (t, Map.empty)
-        Nothing -> return $ Left []
+                    Just s2 -> if path == [] then (solution, Just resultType) else (solution, Nothing) where
+                        solution = Right (resultType, compose s2 s1)
+                        resultType = apply s2 t
+                    Nothing -> (Left [], Nothing)
+                Left _ -> (Left [], Nothing)
+        Just (Left t) -> return (Right (t, Map.empty), Nothing)
+        Nothing -> return (Left [], Nothing)
     E.Var var -> return $ case Map.lookup var env of
-        Just t -> Right (t, Map.empty)
-        Nothing -> Left []
+        Just t -> (Right (t, Map.empty), Just t)
+        Nothing -> (Left [], Nothing)
     E.Fn var body -> do
         paramType <- freshTVar
-        bodyInferResult <- inferType' defs (Map.insert var paramType env) body
-        return $ case bodyInferResult of
-            Right (bodyType, subst) -> Right (T.Fn (apply subst paramType) bodyType, subst)
-            Left errorPath -> Left $ 0 : errorPath
+        (eitherErrorOrSolutionForBody, maybeTypeAtPathInBody) <- inferType' defs (Map.insert var paramType env) body pathInChild
+        return $ case eitherErrorOrSolutionForBody of
+            Right (bodyType, subst) -> if path == [] then (solution, Just fnType) else (solution, maybeTypeAtPathInBody) where
+                solution = Right (fnType, subst)
+                fnType = T.Fn (apply subst paramType) bodyType
+            Left errorPath -> (Left $ 0 : errorPath, Nothing)
     E.Call callee arg -> do
-        calleeInferResult <- inferType' defs env callee
-        case calleeInferResult of
+        (eitherErrorOrSolutionForCallee, maybeTypeAtPathInCallee) <- inferType' defs env callee pathInChild
+        case eitherErrorOrSolutionForCallee of
             Right (calleeType, calleeSubst) -> do
-                argInferResult <- inferType' defs (Map.map (apply calleeSubst) env) arg
-                case argInferResult of
+                (eitherErrorOrSolutionForArg, maybeTypeAtPathInArg) <- inferType' defs (Map.map (apply calleeSubst) env) arg pathInChild
+                (eitherErrorOrSolution, maybeResultType) <- case eitherErrorOrSolutionForArg of
                     Right (argType, argSubst) -> do
-                        resultType <- freshTVar
-                        return $ case unify (apply argSubst calleeType) (T.Fn argType resultType) of
-                            Just unificationSubst -> Right (apply unificationSubst resultType, composedSubst) where
+                        resultTVar <- freshTVar
+                        return $ case unify (apply argSubst calleeType) (T.Fn argType resultTVar) of
+                            Just unificationSubst -> (Right solution, Just substitutedResultType) where
+                                solution = (substitutedResultType, composedSubst)
+                                substitutedResultType = apply unificationSubst resultTVar
                                 composedSubst = unificationSubst `compose` argSubst `compose` calleeSubst
-                            Nothing -> Left []
-                    Left errorPath -> return . Left $ 1 : errorPath
-            Left errorPath -> return . Left $ 0 : errorPath
-    E.Int _ -> return $ Right (T.Int, Map.empty)
+                            Nothing -> (Left [], Nothing)
+                    Left argErrorPath -> return (Left errorPath, Nothing) where
+                        errorPath = 1 : argErrorPath
+                maybeTypeAtPath <- return $ case path of
+                    [] -> maybeResultType
+                    0:_ -> maybeTypeAtPathInCallee
+                    1:_ -> maybeTypeAtPathInArg
+                return (eitherErrorOrSolution, maybeTypeAtPath)
+            Left calleeErrorPath -> return (Left errorPath, maybeTypeAtPath) where
+                errorPath = 0 : calleeErrorPath
+                maybeTypeAtPath = case path of
+                    0:_ -> maybeTypeAtPathInCallee
+                    _ -> Nothing
+    E.Int _ -> return $ if path == [] then (Right solution, Just T.Int) else (Right solution, Nothing) where
+        solution = (T.Int, Map.empty)
+    where pathInChild = case path of [] -> []; _:xs -> xs
 
 freshTVar :: State NextTVarId T.Type
 freshTVar = do
