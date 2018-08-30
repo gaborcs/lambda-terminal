@@ -5,6 +5,7 @@ import Brick
 import Graphics.Vty
 import Eval
 import Infer
+import PrettyPrint
 import qualified Data.Map as Map
 import qualified Expr as E
 import qualified Value as V
@@ -32,8 +33,8 @@ draw state = [ padBottom Max renderedExpr <=> str bottomStr ] where
     renderedExpr = renderExpr expr (Just selectionPath) maybeErrorPath
     (maybeErrorPath, maybeSelectionType) = inferType defs expr selectionPath
     bottomStr = case (maybeSelectionType, eval defs selectedExpr) of
-        (Just t, Just (V.Int v)) -> show v ++ ": " ++ show t
-        (Just t, _) -> show t
+        (Just t, Just (V.Int v)) -> show v ++ ": " ++ prettyPrint t
+        (Just t, _) -> prettyPrint t
         _ -> "Type error"
     selectedExpr = fromJust $ getSubExprAtPath expr selectionPath
 
