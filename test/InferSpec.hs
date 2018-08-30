@@ -7,7 +7,7 @@ import qualified Expr as E
 import qualified Type as T
 
 spec :: Spec
-spec = describe "Infer" $ do
+spec = do
     it "infers the type of expressions" $ do
         E.Int 1 `hasType` T.Int
         E.Ref "constOne" `hasType` T.Fn (T.Var 0) T.Int
