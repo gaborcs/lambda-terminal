@@ -19,8 +19,12 @@ eval' env defs expr = case expr of
         V.Fn f -> eval' env defs arg >>= f
         _ -> Nothing
     E.Int n -> Just $ V.Int n
-    E.Plus -> Just . V.Fn $ \case
-        V.Int a -> Just . V.Fn $ \case
-            V.Int b -> Just . V.Int $ a + b
-            _ -> Nothing
+    E.Plus -> Just $ binaryIntOp (+)
+    E.Times -> Just $ binaryIntOp (*)
+
+binaryIntOp :: (Int -> Int -> Int) -> V.Value
+binaryIntOp f = V.Fn $ \case
+    V.Int a -> Just . V.Fn $ \case
+        V.Int b -> Just . V.Int $ f a b
         _ -> Nothing
+    _ -> Nothing

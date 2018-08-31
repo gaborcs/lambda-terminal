@@ -10,6 +10,7 @@ data Expr
     | Call Expr Expr
     | Int Int
     | Plus
+    | Times
     deriving (Eq, Show)
 
 type Path = [ChildIndex]

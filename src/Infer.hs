@@ -74,10 +74,13 @@ inferType' defs env expr path = case expr of
                     _ -> Nothing
     E.Int _ -> return $ if null path then (Right solution, Just T.Int) else (Right solution, Nothing) where
         solution = (T.Int, Map.empty)
-    E.Plus -> return $ if null path then (Right solution, Just t) else (Right solution, Nothing) where
-        solution = (t, Map.empty)
-        t = T.Fn T.Int (T.Fn T.Int T.Int)
-    where pathInChild = case path of [] -> []; _:xs -> xs
+    E.Plus -> binaryIntOp
+    E.Times -> binaryIntOp
+    where
+        pathInChild = case path of [] -> []; _:xs -> xs
+        binaryIntOp = return $ if null path then (Right solution, Just t) else (Right solution, Nothing) where
+            solution = (t, Map.empty)
+            t = T.Fn T.Int (T.Fn T.Int T.Int)
 
 freshTVar :: State NextTVarId T.Type
 freshTVar = do

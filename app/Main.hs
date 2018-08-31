@@ -57,6 +57,7 @@ renderExpr expr maybeSelectionPath maybeErrorPath = highlightIfSelected rendered
             renderedArg = renderExpr arg (getChildSelectionPath 1) (getChildErrorPath 1)
         E.Int n -> makeRedIfHasError . str $ show n
         E.Plus -> makeRedIfHasError $ str "+"
+        E.Times -> makeRedIfHasError $ str "*"
     getChildSelectionPath = getChildPath maybeSelectionPath
     getChildErrorPath = getChildPath maybeErrorPath
     getChildPath maybePath index = case maybePath of
@@ -76,8 +77,9 @@ getSubExprAtPath expr = foldl f (Just expr) where
 defs :: Map.Map E.ExprName E.Expr
 defs = Map.fromList
     [ ("const", E.Fn "x" . E.Fn "y" $ E.Var "x")
-    , ("inc", E.Call E.Plus $ E.Int 1)
-    , ("main", E.Call (E.Call (E.Call (E.Ref "const") (E.Ref "inc")) (E.Int 2)) (E.Int 3)) ]
+    , ("increment", E.Call E.Plus $ E.Int 1)
+    , ("square", E.Fn "n" $ E.Call (E.Call E.Times (E.Var "n")) (E.Var "n"))
+    , ("main", E.Call (E.Call (E.Ref "square") (E.Call (E.Call (E.Call (E.Ref "const") (E.Ref "increment")) (E.Int 1)) (E.Int 2))) (E.Int 3)) ]
 
 handleEvent :: State -> BrickEvent n e -> EventM n (Next State)
 handleEvent state event = case event of
