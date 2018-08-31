@@ -6,6 +6,5 @@ import qualified Expr as E
 type Env = Map.Map E.VarName Value
 
 data Value
-    = Fn Env E.VarName E.Expr
+    = Fn (Value -> Maybe Value)
     | Int Int
-    deriving (Eq, Show)

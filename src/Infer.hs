@@ -31,7 +31,7 @@ inferType' defs env expr path = case expr of
             (eitherErrorOrSolution, _) <- inferType' (Map.insert ref (Left tv) defs) env expr []
             return $ case eitherErrorOrSolution of
                 Right (t, s1) -> case unify (apply s1 tv) t of
-                    Just s2 -> if path == [] then (solution, Just resultType) else (solution, Nothing) where
+                    Just s2 -> if null path then (solution, Just resultType) else (solution, Nothing) where
                         solution = Right (resultType, compose s2 s1)
                         resultType = apply s2 t
                     Nothing -> (Left [], Nothing)
@@ -45,7 +45,7 @@ inferType' defs env expr path = case expr of
         paramType <- freshTVar
         (eitherErrorOrSolutionForBody, maybeTypeAtPathInBody) <- inferType' defs (Map.insert var paramType env) body pathInChild
         return $ case eitherErrorOrSolutionForBody of
-            Right (bodyType, subst) -> if path == [] then (solution, Just fnType) else (solution, maybeTypeAtPathInBody) where
+            Right (bodyType, subst) -> if null path then (solution, Just fnType) else (solution, maybeTypeAtPathInBody) where
                 solution = Right (fnType, subst)
                 fnType = T.Fn (apply subst paramType) bodyType
             Left errorPath -> (Left $ 0 : errorPath, Nothing)
@@ -75,8 +75,11 @@ inferType' defs env expr path = case expr of
                 maybeTypeAtPath = case path of
                     0:_ -> maybeTypeAtPathInCallee
                     _ -> Nothing
-    E.Int _ -> return $ if path == [] then (Right solution, Just T.Int) else (Right solution, Nothing) where
+    E.Int _ -> return $ if null path then (Right solution, Just T.Int) else (Right solution, Nothing) where
         solution = (T.Int, Map.empty)
+    E.Plus -> return $ if null path then (Right solution, Just t) else (Right solution, Nothing) where
+        solution = (t, Map.empty)
+        t = T.Fn T.Int (T.Fn T.Int T.Int)
     where pathInChild = case path of [] -> []; _:xs -> xs
 
 freshTVar :: State NextTVarId T.Type

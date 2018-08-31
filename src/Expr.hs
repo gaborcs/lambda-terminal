@@ -9,6 +9,7 @@ data Expr
     | Fn VarName Expr
     | Call Expr Expr
     | Int Int
+    | Plus
     deriving (Eq, Show)
 
 type Path = [ChildIndex]
