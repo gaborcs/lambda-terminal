@@ -65,10 +65,7 @@ inferType' defs env expr path = case expr of
                             Nothing -> (Left [], Nothing)
                     Left argErrorPath -> return (Left errorPath, Nothing) where
                         errorPath = 1 : argErrorPath
-                maybeTypeAtPath <- return $ case path of
-                    [] -> maybeResultType
-                    0:_ -> maybeTypeAtPathInCallee
-                    1:_ -> maybeTypeAtPathInArg
+                let maybeTypeAtPath = case path of [] -> maybeResultType; 0:_ -> maybeTypeAtPathInCallee; 1:_ -> maybeTypeAtPathInArg
                 return (eitherErrorOrSolution, maybeTypeAtPath)
             Left calleeErrorPath -> return (Left errorPath, maybeTypeAtPath) where
                 errorPath = 0 : calleeErrorPath
