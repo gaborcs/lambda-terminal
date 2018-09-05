@@ -1,92 +1,83 @@
 module Infer where
 
+import Control.Exception (Exception, throw)
 import Control.Monad.State
 import qualified Data.List as List
 import qualified Data.Map as Map
 import qualified Expr as E
 import qualified Type as T
 
+data InferResult = Typed TypeTree | TypeError TypeError deriving Show
+data TypeTree = TypeTree T.Type (Map.Map E.ChildIndex TypeTree) deriving Show
+type TypeError = Map.Map E.ChildIndex InferResult
 type TypeEnv = Map.Map E.VarName T.Type
-type ErrorPath = E.Path
+type Infer = State NextTVarId
 type NextTVarId = T.VarId
+data InferError = UnboundRef | UnboundVar deriving Show
+instance Exception InferError
+data InferTree = InferTree T.Type [TypeEqualityConstraint] (Map.Map E.ChildIndex InferTree)
+type TypeEqualityConstraint = (T.Type, T.Type)
 type Substitution = Map.Map T.VarId T.Type
+newtype ErrorTree = ErrorTree (Map.Map E.ChildIndex ErrorTree)
 data InfiniteType = InfiniteType
 
-inferType :: Map.Map E.ExprName E.Expr -> E.Expr -> E.Path -> (Maybe ErrorPath, Maybe T.Type)
-inferType defs expr path = (maybeErrorPath, maybeTypeAtPath) where
-    maybeErrorPath = either Just (const Nothing) eitherErrorOrSolution
-    (eitherErrorOrSolution, maybeTypeAtPath) = evalState (inferType' (Map.map Right defs) Map.empty expr path) firstTVarId
-    firstTVarId = 0
+inferType :: Map.Map E.ExprName E.Expr -> E.Expr -> InferResult
+inferType defs expr = createInferResult subst maybeErrorTree inferTree where
+    inferTree = evalState (infer (Map.map Right defs) Map.empty expr) 0
+    (subst, maybeErrorTree) = solve inferTree
 
-inferType' ::
-    Map.Map E.ExprName (Either T.Type E.Expr)
-    -> TypeEnv
-    -> E.Expr
-    -> E.Path
-    -> State NextTVarId (Either ErrorPath (T.Type, Substitution), Maybe T.Type)
-inferType' defs env expr path = case expr of
+infer :: Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Expr -> Infer InferTree
+infer defs env expr = case expr of
     E.Ref ref -> case Map.lookup ref defs of
         Just (Right expr) -> do
+            -- to handle recursion we create a type variable that will be used when
+            -- the implementation of the expression refers to itself
             tv <- freshTVar
-            (eitherErrorOrSolution, _) <- inferType' (Map.insert ref (Left tv) defs) env expr []
-            return $ case eitherErrorOrSolution of
-                Right (t, s1) -> case unify (apply s1 tv) t of
-                    Just s2 -> if null path then (solution, Just resultType) else (solution, Nothing) where
-                        solution = Right (resultType, compose s2 s1)
-                        resultType = apply s2 t
-                    Nothing -> (Left [], Nothing)
-                Left _ -> (Left [], Nothing)
-        Just (Left t) -> return (Right (t, Map.empty), Nothing)
-        Nothing -> return (Left [], Nothing)
+            inferTree@(InferTree t _ _) <- infer (Map.insert ref (Left tv) defs) env expr
+            return $ InferTree tv [(tv, t)] $ Map.singleton 0 inferTree
+        Just (Left tv) -> return $ InferTree tv [] Map.empty
+        Nothing -> throw UnboundRef
     E.Var var -> return $ case Map.lookup var env of
-        Just t -> (Right (t, Map.empty), Just t)
-        Nothing -> (Left [], Nothing)
+        Just t -> InferTree t [] Map.empty
+        Nothing -> throw UnboundVar
     E.Fn var body -> do
         paramType <- freshTVar
-        (eitherErrorOrSolutionForBody, maybeTypeAtPathInBody) <- inferType' defs (Map.insert var paramType env) body pathInChild
-        return $ case eitherErrorOrSolutionForBody of
-            Right (bodyType, subst) -> if null path then (solution, Just fnType) else (solution, maybeTypeAtPathInBody) where
-                solution = Right (fnType, subst)
-                fnType = T.Fn (apply subst paramType) bodyType
-            Left errorPath -> (Left $ 0 : errorPath, Nothing)
+        bodyTree@(InferTree bodyType _ _) <- infer defs (Map.insert var paramType env) body
+        return $ InferTree (T.Fn paramType bodyType) [] $ Map.singleton 0 bodyTree
     E.Call callee arg -> do
-        (eitherErrorOrSolutionForCallee, maybeTypeAtPathInCallee) <- inferType' defs env callee pathInChild
-        case eitherErrorOrSolutionForCallee of
-            Right (calleeType, calleeSubst) -> do
-                (eitherErrorOrSolutionForArg, maybeTypeAtPathInArg) <- inferType' defs (Map.map (apply calleeSubst) env) arg pathInChild
-                (eitherErrorOrSolution, maybeResultType) <- case eitherErrorOrSolutionForArg of
-                    Right (argType, argSubst) -> do
-                        resultTVar <- freshTVar
-                        return $ case unify (apply argSubst calleeType) (T.Fn argType resultTVar) of
-                            Just unificationSubst -> (Right solution, Just substitutedResultType) where
-                                solution = (substitutedResultType, composedSubst)
-                                substitutedResultType = apply unificationSubst resultTVar
-                                composedSubst = unificationSubst `compose` argSubst `compose` calleeSubst
-                            Nothing -> (Left [], Nothing)
-                    Left argErrorPath -> return (Left errorPath, Nothing) where
-                        errorPath = 1 : argErrorPath
-                let maybeTypeAtPath = case path of [] -> maybeResultType; 0:_ -> maybeTypeAtPathInCallee; 1:_ -> maybeTypeAtPathInArg
-                return (eitherErrorOrSolution, maybeTypeAtPath)
-            Left calleeErrorPath -> return (Left errorPath, maybeTypeAtPath) where
-                errorPath = 0 : calleeErrorPath
-                maybeTypeAtPath = case path of
-                    0:_ -> maybeTypeAtPathInCallee
-                    _ -> Nothing
-    E.Int _ -> return $ if null path then (Right solution, Just T.Int) else (Right solution, Nothing) where
-        solution = (T.Int, Map.empty)
-    E.Plus -> binaryIntOp
-    E.Times -> binaryIntOp
-    where
-        pathInChild = case path of [] -> []; _:xs -> xs
-        binaryIntOp = return $ if null path then (Right solution, Just t) else (Right solution, Nothing) where
-            solution = (t, Map.empty)
-            t = T.Fn T.Int (T.Fn T.Int T.Int)
+        calleeTree@(InferTree calleeType _ _) <- infer defs env callee
+        argTree@(InferTree argType _ _) <- infer defs env arg
+        resultType <- freshTVar
+        let childTrees = Map.fromList [(0, calleeTree), (1, argTree)]
+        return $ InferTree resultType [(calleeType, T.Fn argType resultType)] childTrees
+    E.Int _ -> return $ InferTree T.Int [] Map.empty
+    E.Plus -> return $ InferTree binaryIntOpType [] Map.empty
+    E.Times -> return $ InferTree binaryIntOpType [] Map.empty
 
-freshTVar :: State NextTVarId T.Type
+freshTVar :: Infer T.Type
 freshTVar = do
     nextTVarId <- get
     put $ nextTVarId + 1
     return $ T.Var nextTVarId
+
+binaryIntOpType :: T.Type
+binaryIntOpType = T.Fn T.Int $ T.Fn T.Int T.Int
+
+solve :: InferTree -> (Substitution, Maybe ErrorTree)
+solve = solve' Map.empty
+
+solve' :: Substitution -> InferTree -> (Substitution, Maybe ErrorTree)
+solve' initialSubst (InferTree _ constraints children) = (finalSubst, maybeErrorTree) where
+    (finalSubst, hasError) = foldl constraintReducer (substAfterSolvingChildren, False) constraints
+    constraintReducer (s0, hasError) (t1, t2) = case unify (apply s0 t1) (apply s0 t2) of
+        Just s1 -> (compose s1 s0, hasError)
+        Nothing -> (s0, True)
+    (substAfterSolvingChildren, childErrorTrees) = Map.foldlWithKey childrenReducer (initialSubst, Map.empty) children
+    childrenReducer (s0, errorTrees) index child = maybe errorTrees (flip (Map.insert index) errorTrees) <$> solve' s0 child
+    maybeErrorTree = if hasError || not (Map.null childErrorTrees) then Just (ErrorTree childErrorTrees) else Nothing
+
+compose :: Substitution -> Substitution -> Substitution
+compose s1 s2 = Map.map (apply s1) s2 `Map.union` s1
 
 unify :: T.Type -> T.Type -> Maybe Substitution
 unify t1 t2 = case (t1, t2) of
@@ -111,11 +102,23 @@ typeVars t = case t of
     T.Fn t1 t2 -> typeVars t1 `List.union` typeVars t2
     T.Int -> []
 
-compose :: Substitution -> Substitution -> Substitution
-compose s1 s2 = Map.map (apply s1) s2 `Map.union` s1
-
 apply :: Substitution -> T.Type -> T.Type
 apply subst t = case t of
     T.Var var -> Map.findWithDefault t var subst
     T.Fn t1 t2 -> T.Fn (apply subst t1) (apply subst t2)
     T.Int -> T.Int
+
+createInferResult :: Substitution -> Maybe ErrorTree -> InferTree -> InferResult
+createInferResult subst maybeErrorTree inferTree@(InferTree t _ inferTreeChildren) = case maybeErrorTree of
+    Nothing -> Typed $ createTypeTree inferTree where
+        createTypeTree (InferTree t _ children) = TypeTree (apply subst t) (Map.map createTypeTree children)
+    Just (ErrorTree errorChildren) -> TypeError $ Map.mapWithKey toInferResult inferTreeChildren where
+        toInferResult index = createInferResult subst (Map.lookup index errorChildren)
+
+hasErrorAtRoot :: TypeError -> Bool
+hasErrorAtRoot = all isTyped
+
+isTyped :: InferResult -> Bool
+isTyped inferResult = case inferResult of
+    Typed _ -> True
+    _ -> False

@@ -8,6 +8,7 @@ import Infer
 import PrettyPrint
 import qualified Data.Map as Map
 import qualified Expr as E
+import qualified Type as T
 import qualified Value as V
 
 data State = State E.ExprName E.Path
@@ -30,39 +31,57 @@ draw :: State -> [Widget n]
 draw state = [ padBottom Max renderedExpr <=> str bottomStr ] where
     State exprName selectionPath = state
     expr = fromJust $ Map.lookup exprName defs
-    renderedExpr = renderExpr expr (Just selectionPath) maybeErrorPath
-    (maybeErrorPath, maybeSelectionType) = inferType defs expr selectionPath
+    renderedExpr = renderExpr expr (Just selectionPath) maybeTypeError
+    maybeTypeError = case inferResult of
+        TypeError typeError -> Just typeError
+        _ -> Nothing
+    inferResult = inferType defs expr
+    maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case (maybeSelectionType, eval defs selectedExpr) of
         (Just t, Just (V.Int v)) -> show v ++ ": " ++ prettyPrint t
         (Just t, _) -> prettyPrint t
         _ -> "Type error"
     selectedExpr = fromJust $ getSubExprAtPath expr selectionPath
 
-renderExpr :: E.Expr -> Maybe E.Path -> Maybe E.Path -> Widget n
-renderExpr expr maybeSelectionPath maybeErrorPath = highlightIfSelected renderedExpr where
+renderExpr :: E.Expr -> Maybe E.Path -> Maybe TypeError -> Widget n
+renderExpr expr maybeSelectionPath maybeTypeError = highlightIfSelected renderedExpr where
     highlightIfSelected = if selected then highlight else id
     selected = maybeSelectionPath == Just []
     highlight = modifyDefAttr $ flip withStyle bold
     makeRedIfHasError = if hasError then makeRed else id
-    hasError = maybeErrorPath == Just []
+    hasError = maybe False hasErrorAtRoot maybeTypeError
     makeRed = modifyDefAttr $ flip withForeColor red
     renderedExpr = case expr of
         E.Ref exprName -> makeRedIfHasError $ str exprName
         E.Var var -> makeRedIfHasError $ str var
         E.Fn var body -> makeRedIfHasError $ str ('λ' : var) <=> (str "  " <+> renderedBody) where
-            renderedBody = renderExpr body (getChildSelectionPath 0) (getChildErrorPath 0)
+            renderedBody = renderExpr body (getChildSelectionPath 0) (getChildError 0)
         E.Call callee arg -> renderedCallee <=> (callSymbol <+> renderedArg) where
-            renderedCallee = renderExpr callee (getChildSelectionPath 0) (getChildErrorPath 0)
+            renderedCallee = renderExpr callee (getChildSelectionPath 0) (getChildError 0)
             callSymbol = makeRedIfHasError $ str "└ "
-            renderedArg = renderExpr arg (getChildSelectionPath 1) (getChildErrorPath 1)
+            renderedArg = renderExpr arg (getChildSelectionPath 1) (getChildError 1)
         E.Int n -> makeRedIfHasError . str $ show n
         E.Plus -> makeRedIfHasError $ str "+"
         E.Times -> makeRedIfHasError $ str "*"
     getChildSelectionPath = getChildPath maybeSelectionPath
-    getChildErrorPath = getChildPath maybeErrorPath
+    getChildError index = case maybeTypeError >>= Map.lookup index of
+        Just (TypeError childError) -> Just childError
+        _ -> Nothing
     getChildPath maybePath index = case maybePath of
         Just (i:childPath) -> if i == index then Just childPath else Nothing
         _ -> Nothing
+
+getTypeAtPathInInferResult :: E.Path -> InferResult -> Maybe T.Type
+getTypeAtPathInInferResult path inferResult = case inferResult of
+    Typed typeTree -> getTypeAtPathInTypeTree path typeTree
+    TypeError childResults -> case path of
+        [] -> Nothing
+        index:restOfPath -> Map.lookup index childResults >>= getTypeAtPathInInferResult restOfPath
+
+getTypeAtPathInTypeTree :: E.Path -> TypeTree -> Maybe T.Type
+getTypeAtPathInTypeTree path (TypeTree t children) = case path of
+    [] -> Just t
+    index:restOfPath -> Map.lookup index children >>= getTypeAtPathInTypeTree restOfPath
 
 getSubExprAtPath :: E.Expr -> E.Path -> Maybe E.Expr
 getSubExprAtPath expr = foldl f (Just expr) where

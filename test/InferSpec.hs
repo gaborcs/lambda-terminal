@@ -28,12 +28,8 @@ spec = do
         E.Ref "inc" `hasType` T.Fn T.Int T.Int
         E.Call (E.Ref "inc") (E.Int 1) `hasType` T.Int
     it "indicates where type errors happen" $ do
-        E.Var "unbound" `failsAtPath` []
-        E.Fn "x" (E.Var "unbound") `failsAtPath` [0]
         E.Call (E.Int 1) (E.Int 1) `failsAtPath` []
-        E.Call (E.Var "unbound") (E.Int 1) `failsAtPath` [0]
-        E.Call (E.Int 1) (E.Var "unbound") `failsAtPath` [1]
-        E.Ref "unboundVar" `failsAtPath` []
+        E.Fn "x" (E.Call (E.Int 1) (E.Int 1)) `failsAtPath` [0]
         E.Call (E.Ref "inc") (E.Ref "id") `failsAtPath` []
 
 defs :: Map.Map E.ExprName E.Expr
@@ -43,16 +39,24 @@ defs = Map.fromList
     , ("const", E.Fn "x" . E.Fn "y" $ E.Var "x")
     , ("inc", E.Call E.Plus $ E.Int 1)
     , ("diverge", E.Ref "diverge")
-    , ("divergeFn", E.Fn "n" $ E.Call (E.Ref "divergeFn") (E.Int 1))
-    , ("unboundVar", E.Var "unbound") ]
+    , ("divergeFn", E.Fn "n" $ E.Call (E.Ref "divergeFn") (E.Int 1)) ]
 
 hasType :: E.Expr -> T.Type -> Expectation
-hasType expr t = indexTVarsFromZero <$> maybeType `shouldBe` Just t where
-    (_, maybeType) = inferType defs expr []
+hasType expr expectedType = case inferType defs expr of
+    Typed (TypeTree actualType _) -> indexTVarsFromZero actualType `shouldBe` expectedType
+    _ -> expectationFailure $ "type error for: " ++ show expr
 
 indexTVarsFromZero :: T.Type -> T.Type
 indexTVarsFromZero t = apply (Map.fromList $ zip (typeVars t) (T.Var <$> [0..])) t
 
-failsAtPath :: E.Expr -> ErrorPath -> Expectation
-failsAtPath expr errorPath = maybeErrorPath `shouldBe` Just errorPath where
-    (maybeErrorPath, _) = inferType defs expr []
+failsAtPath :: E.Expr -> E.Path -> Expectation
+failsAtPath expr path = inferType defs expr `hasErrorAtPath` path
+
+hasErrorAtPath :: InferResult -> E.Path -> Expectation
+hasErrorAtPath inferResult path = case inferResult of
+    Typed _ -> expectationFailure "should have a type error"
+    TypeError childResults -> case path of
+        [] -> childResults `shouldSatisfy` hasErrorAtRoot
+        index:restOfPath -> case Map.lookup index childResults of
+            Just childResult -> childResult `hasErrorAtPath` restOfPath
+            Nothing -> expectationFailure "path doesn't exist"
