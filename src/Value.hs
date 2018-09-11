@@ -7,4 +7,5 @@ type Env = Map.Map E.VarName Value
 
 data Value
     = Fn (Value -> Maybe Value)
+    | Constructor E.ConstructorName [Value]
     | Int Int
