@@ -8,6 +8,8 @@ import Infer
 import PrettyPrintType
 import PrettyPrintValue
 import Util
+import Defs
+import ConstructorTypes
 import qualified Data.Map as Map
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Expr as E
@@ -144,16 +146,6 @@ getChildInPattern :: P.Pattern -> E.ChildIndex -> Maybe Selectable
 getChildInPattern pattern index = case pattern of
     P.Var _ -> Nothing
     P.Constructor name patterns -> Pattern <$> getItemAtIndex patterns index
-
-constructorTypes :: Map.Map E.ConstructorName T.Type
-constructorTypes = Map.fromList [("Nothing", T.Constructor "Maybe" [T.Var 0]), ("Just", T.Fn (T.Var 0) (T.Constructor "Maybe" [T.Var 0]))]
-
-defs :: Map.Map E.ExprName E.Expr
-defs = Map.fromList
-    [ ("const", E.fn "x" . E.fn "y" $ E.Var "x")
-    , ("increment", E.Call E.Plus $ E.Int 1)
-    , ("square", E.fn "n" $ E.Call (E.Call E.Times (E.Var "n")) (E.Var "n"))
-    , ("main", E.Call (E.Call (E.Constructor "Just") (E.Call (E.Ref "square") (E.Call (E.Call (E.Call (E.Ref "const") (E.Ref "increment")) (E.Int 1)) (E.Int 2)))) (E.Int 3)) ]
 
 handleEvent :: State -> BrickEvent n e -> EventM n (Next State)
 handleEvent state event = case event of
