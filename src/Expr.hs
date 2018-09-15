@@ -16,7 +16,9 @@ data Expr
     | Call Expr Expr
     | Constructor ConstructorName
     | Int Int
+    | Equals
     | Plus
+    | Minus
     | Times
     deriving (Eq, Show)
 

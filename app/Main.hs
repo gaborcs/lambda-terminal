@@ -46,8 +46,8 @@ draw state = [ padBottom Max renderedExpr <=> str bottomStr ] where
         _ -> Nothing
     inferResult = inferType constructorTypes defs expr
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
-    bottomStr = case (maybeSelectionType, maybeSelectionValue) of
-        (Just t, Just v) -> prettyPrintValue v ++ ": " ++ prettyPrintType t
+    bottomStr = case (maybeSelectionType, maybeSelectionValue >>= prettyPrintValue) of
+        (Just t, Just valStr) -> valStr ++ ": " ++ prettyPrintType t
         (Just t, _) -> prettyPrintType t
         _ -> "Type error"
     maybeSelectionValue = maybeSelectedExpr >>= eval defs
@@ -77,7 +77,9 @@ renderExpr expr makeRedIfHasError (RenderChild renderChild) = case expr of
         renderedArg = renderChild 1 (renderExpr arg)
     E.Constructor name -> makeRedIfHasError $ str name
     E.Int n -> makeRedIfHasError . str $ show n
+    E.Equals -> makeRedIfHasError $ str "="
     E.Plus -> makeRedIfHasError $ str "+"
+    E.Minus -> makeRedIfHasError $ str "-"
     E.Times -> makeRedIfHasError $ str "*"
 
 renderAlternative :: E.Alternative -> Renderer n

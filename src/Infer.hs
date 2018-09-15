@@ -57,8 +57,10 @@ infer instantiateConstructorType defs env expr = case expr of
         t <- instantiateConstructorType name
         return $ InferTree t [] []
     E.Int _ -> return $ InferTree T.Int [] []
-    E.Plus -> return $ InferTree binaryIntOpType [] []
-    E.Times -> return $ InferTree binaryIntOpType [] []
+    E.Equals -> return $ InferTree (binaryIntOp $ T.Constructor "Bool" []) [] []
+    E.Plus -> return $ InferTree (binaryIntOp T.Int) [] []
+    E.Minus -> return $ InferTree (binaryIntOp T.Int) [] []
+    E.Times -> return $ InferTree (binaryIntOp T.Int) [] []
 
 inferAlternative :: (E.ConstructorName -> Infer T.Type) -> Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Alternative -> Infer InferTree
 inferAlternative inferConstructorType defs env (pattern, expr) = do
@@ -86,8 +88,8 @@ freshTVar = do
     put $ nextTVarId + 1
     return $ T.Var nextTVarId
 
-binaryIntOpType :: T.Type
-binaryIntOpType = T.Fn T.Int $ T.Fn T.Int T.Int
+binaryIntOp :: T.Type -> T.Type
+binaryIntOp resultType = T.Fn T.Int $ T.Fn T.Int resultType
 
 instantiate :: T.Type -> Infer T.Type
 instantiate t = do
