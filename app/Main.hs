@@ -17,18 +17,18 @@ import qualified Pattern as P
 import qualified Type as T
 import qualified Value as V
 
-data State = State E.ExprName E.Path
+type History = NonEmpty.NonEmpty (E.ExprName, E.Path) -- from current to least recent
 data Selectable = Expr E.Expr | Alternative E.Alternative | Pattern P.Pattern
 newtype RenderChild n = RenderChild (E.ChildIndex -> ((Widget n -> Widget n) -> RenderChild n -> Widget n) -> Widget n)
 type Renderer n = (Widget n -> Widget n) -> RenderChild n -> Widget n
 
 main :: IO ()
 main = do
-    defaultMain app initialState
+    defaultMain app initialHistory
     return ()
-    where initialState = State "main" []
+    where initialHistory = ("main", []) NonEmpty.:| []
 
-app :: App State e String
+app :: App History e String
 app = App
     { appDraw = draw
     , appChooseCursor = neverShowCursor
@@ -36,9 +36,9 @@ app = App
     , appStartEvent = return
     , appAttrMap = const $ attrMap defAttr [] }
 
-draw :: State -> [Widget n]
-draw state = [ padBottom Max renderedExpr <=> str bottomStr ] where
-    State exprName selectionPath = state
+draw :: History -> [Widget n]
+draw history = [ padBottom Max renderedExpr <=> str bottomStr ] where
+    (exprName, selectionPath) = NonEmpty.head history
     expr = fromJust $ Map.lookup exprName defs
     renderedExpr = renderWithAttrs (Just selectionPath) maybeTypeError (renderExpr expr)
     maybeTypeError = case inferResult of
@@ -154,19 +154,20 @@ getChildInPattern pattern index = case pattern of
     P.Var _ -> Nothing
     P.Constructor name patterns -> Pattern <$> getItemAtIndex patterns index
 
-handleEvent :: State -> BrickEvent n e -> EventM n (Next State)
-handleEvent state event = case event of
+handleEvent :: History -> BrickEvent n e -> EventM n (Next History)
+handleEvent history event = case event of
     VtyEvent (EvKey KUp []) -> nav prev
     VtyEvent (EvKey KDown []) -> nav next
     VtyEvent (EvKey KLeft []) -> nav parent
     VtyEvent (EvKey KRight []) -> nav child
     VtyEvent (EvKey KEnter []) -> continue goToDefinition
-    VtyEvent (EvKey (KChar 'q') []) -> halt state
-    _ -> continue state
+    VtyEvent (EvKey KEsc []) -> continue $ fromMaybe history $ NonEmpty.nonEmpty past
+    VtyEvent (EvKey (KChar 'q') []) -> halt history
+    _ -> continue history
     where
-        State exprName selectionPath = state
+        (exprName, selectionPath) NonEmpty.:| past = history
         expr = fromJust $ Map.lookup exprName defs
-        nav = continue . State exprName
+        nav path = continue $ (exprName, path) NonEmpty.:| past
         prev = if isJust prevExpr then prevPath else selectionPath
         next = if isJust nextExpr then nextPath else selectionPath
         parent = if null selectionPath then [] else init selectionPath
@@ -180,5 +181,5 @@ handleEvent state event = case event of
         pathToFirstChildOfSelected = selectionPath ++ [0]
         getExprAtPath path = getItemAtPathInExpr path expr
         goToDefinition = case selectedExpr of
-            Just (Expr (E.Ref exprName)) -> if Map.member exprName defs then State exprName [] else state
-            _ -> state
+            Just (Expr (E.Ref exprName)) -> if Map.member exprName defs then NonEmpty.cons (exprName, []) history else history
+            _ -> history
