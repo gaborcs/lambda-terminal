@@ -84,12 +84,17 @@ renderExpr expr makeRedIfHasError (RenderChild renderChild) = case expr of
 
 renderAlternative :: E.Alternative -> Renderer n
 renderAlternative (pattern, expr) makeRedIfHasError (RenderChild renderChild) =
-    makeRedIfHasError $ renderChild 0 (renderPattern pattern) <=> (str "  " <+> renderChild 1 (renderExpr expr))
+    makeRedIfHasError $ renderChild 0 (renderPattern pattern) <=> indent (renderChild 1 (renderExpr expr))
 
 renderPattern :: P.Pattern -> Renderer n
 renderPattern pattern makeRedIfHasError (RenderChild renderChild) = makeRedIfHasError $ case pattern of
     P.Var var -> str var
-    P.Constructor name patterns -> str name <=> (str "  " <+> vBox (zipWith renderChild [0..] $ renderPattern <$> patterns))
+    P.Constructor name patterns -> str name <=> vBox (indent <$> renderedChildren) where
+        renderedChildren = zipWith renderChild [0..] renderers
+        renderers = renderPattern <$> patterns
+
+indent :: Widget n -> Widget n
+indent w = str "  " <+> w
 
 highlight :: Widget n -> Widget n
 highlight = modifyDefAttr $ flip withStyle bold
