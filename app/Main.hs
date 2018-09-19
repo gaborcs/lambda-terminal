@@ -1,7 +1,11 @@
 module Main where
 
+import Control.DeepSeq
+import Control.Exception.Base (evaluate)
+import Control.Monad.IO.Class
 import Data.Maybe
-import Brick
+import System.Timeout
+import Brick hiding (Location)
 import Graphics.Vty
 import Eval
 import Infer
@@ -17,18 +21,44 @@ import qualified Pattern as P
 import qualified Type as T
 import qualified Value as V
 
-type History = NonEmpty.NonEmpty (E.ExprName, E.Path) -- from current to least recent
+data AppState = AppState LocationHistory InferResult EvalResult
+type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recent
+type Location = (E.ExprName, E.Path)
+data EvalResult = Timeout | Error | Value V.Value
 data Selectable = Expr E.Expr | Alternative E.Alternative | Pattern P.Pattern
 newtype RenderChild n = RenderChild (E.ChildIndex -> ((Widget n -> Widget n) -> RenderChild n -> Widget n) -> Widget n)
 type Renderer n = (Widget n -> Widget n) -> RenderChild n -> Widget n
 
 main :: IO ()
 main = do
-    defaultMain app initialHistory
+    let initialLocation = ("main", [])
+    let initialLocationHistory = initialLocation NonEmpty.:| []
+    initialState <- createAppState initialLocationHistory
+    defaultMain app initialState
     return ()
-    where initialHistory = ("main", []) NonEmpty.:| []
 
-app :: App History e String
+createAppState :: LocationHistory -> IO AppState
+createAppState locationHistory = do
+    let (exprName, selectionPath) = NonEmpty.head locationHistory
+    let expr = fromJust $ Map.lookup exprName defs
+    let inferResult = inferType constructorTypes defs expr
+    let selected = fromJust $ getItemAtPathInExpr selectionPath expr
+    evalResult <- createEvalResult selected
+    return $ AppState locationHistory inferResult evalResult
+
+createEvalResult :: Selectable -> IO EvalResult
+createEvalResult selectable = do
+    let maybeSelectedExpr = case selectable of
+            Expr expr -> Just expr
+            _ -> Nothing
+    let maybeSelectionValue = maybeSelectedExpr >>= eval defs
+    timeoutResult <- timeout 10000 $ evaluate $ force maybeSelectionValue
+    return $ case timeoutResult of
+        Just (Just v) -> Value v
+        Just Nothing -> Error
+        Nothing -> Timeout
+
+app :: App AppState e String
 app = App
     { appDraw = draw
     , appChooseCursor = neverShowCursor
@@ -36,25 +66,21 @@ app = App
     , appStartEvent = return
     , appAttrMap = const $ attrMap defAttr [] }
 
-draw :: History -> [Widget n]
-draw history = [ padBottom Max renderedExpr <=> str bottomStr ] where
-    (exprName, selectionPath) = NonEmpty.head history
+draw :: AppState -> [Widget n]
+draw (AppState locationHistory inferResult evalResult) = [ padBottom Max renderedExpr <=> str bottomStr ] where
+    (exprName, selectionPath) = NonEmpty.head locationHistory
     expr = fromJust $ Map.lookup exprName defs
     renderedExpr = renderWithAttrs (Just selectionPath) maybeTypeError (renderExpr expr)
     maybeTypeError = case inferResult of
         TypeError typeError -> Just typeError
         _ -> Nothing
-    inferResult = inferType constructorTypes defs expr
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
-    bottomStr = case (maybeSelectionType, maybeSelectionValue >>= prettyPrintValue) of
-        (Just t, Just valStr) -> valStr ++ ": " ++ prettyPrintType t
-        (Just t, _) -> prettyPrintType t
-        _ -> "Type error"
-    maybeSelectionValue = maybeSelectedExpr >>= eval defs
-    maybeSelectedExpr = case selected of
-        Expr expr -> Just expr
-        _ -> Nothing
-    selected = fromJust $ getItemAtPathInExpr selectionPath expr
+    bottomStr = evalStr ++ ": " ++ typeStr
+    evalStr = case evalResult of
+        Timeout -> "<eval timeout>"
+        Error -> ""
+        Value v -> fromMaybe "" $ prettyPrintValue v
+    typeStr = maybe "<type error>" prettyPrintType maybeSelectionType
 
 renderWithAttrs :: Maybe E.Path -> Maybe TypeError -> Renderer n -> Widget n
 renderWithAttrs maybeSelectionPath maybeTypeError renderer = highlightIfSelected widget where
@@ -154,32 +180,36 @@ getChildInPattern pattern index = case pattern of
     P.Var _ -> Nothing
     P.Constructor name patterns -> Pattern <$> getItemAtIndex patterns index
 
-handleEvent :: History -> BrickEvent n e -> EventM n (Next History)
-handleEvent history event = case event of
-    VtyEvent (EvKey KUp []) -> nav prev
-    VtyEvent (EvKey KDown []) -> nav next
-    VtyEvent (EvKey KLeft []) -> nav parent
-    VtyEvent (EvKey KRight []) -> nav child
-    VtyEvent (EvKey KEnter []) -> continue goToDefinition
-    VtyEvent (EvKey KEsc []) -> continue $ fromMaybe history $ NonEmpty.nonEmpty past
-    VtyEvent (EvKey (KChar 'q') []) -> halt history
-    _ -> continue history
+handleEvent :: AppState -> BrickEvent n e -> EventM n (Next AppState)
+handleEvent appState event = case event of
+    VtyEvent (EvKey KUp []) -> nav prevPath
+    VtyEvent (EvKey KDown []) -> nav nextPath
+    VtyEvent (EvKey KLeft []) -> nav parentPath
+    VtyEvent (EvKey KRight []) -> nav pathToFirstChildOfSelected
+    VtyEvent (EvKey KEnter []) -> goToDefinition
+    VtyEvent (EvKey KEsc []) -> goBack
+    VtyEvent (EvKey (KChar 'q') []) -> halt appState
+    _ -> continue appState
     where
-        (exprName, selectionPath) NonEmpty.:| past = history
+        AppState locationHistory inferResult maybeEvalResult = appState
+        (exprName, selectionPath) NonEmpty.:| past = locationHistory
         expr = fromJust $ Map.lookup exprName defs
-        nav path = continue $ (exprName, path) NonEmpty.:| past
-        prev = if isJust prevExpr then prevPath else selectionPath
-        next = if isJust nextExpr then nextPath else selectionPath
-        parent = if null selectionPath then [] else init selectionPath
-        child = if isJust firstChildOfSelected then pathToFirstChildOfSelected else selectionPath
-        nextExpr = getExprAtPath nextPath
+        nav path = case getExprAtPath path of
+            Just exprAtPath -> liftIO getNewAppState >>= continue where
+                getNewAppState = AppState newLocationHistory inferResult <$> getNewEvalResult
+                newLocationHistory = (exprName, path) NonEmpty.:| past
+                getNewEvalResult = createEvalResult $ exprAtPath
+            Nothing -> continue appState
+        parentPath = if null selectionPath then [] else init selectionPath
         nextPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath + 1]
-        prevExpr = getExprAtPath prevPath
         prevPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath - 1]
         selectedExpr = getExprAtPath selectionPath
-        firstChildOfSelected = getExprAtPath pathToFirstChildOfSelected
         pathToFirstChildOfSelected = selectionPath ++ [0]
         getExprAtPath path = getItemAtPathInExpr path expr
         goToDefinition = case selectedExpr of
-            Just (Expr (E.Ref exprName)) -> if Map.member exprName defs then NonEmpty.cons (exprName, []) history else history
-            _ -> history
+            Just (Expr (E.Ref exprName)) ->
+                if Map.member exprName defs
+                then liftIO (createAppState $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
+                else continue appState
+            _ -> continue appState
+        goBack = liftIO (createAppState $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue

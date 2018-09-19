@@ -1,5 +1,9 @@
+{-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
+
 module Value where
 
+import GHC.Generics
+import Control.DeepSeq
 import qualified Data.Map as Map
 import qualified Expr as E
 
@@ -12,3 +16,4 @@ data Value
     = Fn (Maybe Value -> Maybe Value)
     | Constructor E.ConstructorName [Maybe Value]
     | Int Int
+    deriving (Generic, NFData)
