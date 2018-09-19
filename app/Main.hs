@@ -75,12 +75,13 @@ draw (AppState locationHistory inferResult evalResult) = [ padBottom Max rendere
         TypeError typeError -> Just typeError
         _ -> Nothing
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
-    bottomStr = evalStr ++ ": " ++ typeStr
+    bottomStr = case maybeSelectionType of
+        Just t -> evalStr ++ ": " ++ prettyPrintType t
+        Nothing -> "Type error"
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
         Error -> ""
         Value v -> fromMaybe "" $ prettyPrintValue v
-    typeStr = maybe "<type error>" prettyPrintType maybeSelectionType
 
 renderWithAttrs :: Maybe E.Path -> Maybe TypeError -> Renderer n -> Widget n
 renderWithAttrs maybeSelectionPath maybeTypeError renderer = highlightIfSelected widget where
