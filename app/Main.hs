@@ -28,7 +28,7 @@ type Location = (E.ExprName, E.Path)
 data EvalResult = Timeout | Error | Value V.Value
 data Selectable = Expr E.Expr | Alternative E.Alternative | Pattern P.Pattern
 newtype RenderChild n = RenderChild (E.ChildIndex -> Renderer n -> Widget n)
-type Renderer n = (Widget n -> Widget n) -> RenderChild n -> Widget n
+type Renderer n = RenderChild n -> Widget n
 
 main :: IO ()
 main = do
@@ -85,37 +85,36 @@ draw (AppState locationHistory inferResult evalResult) = [ padBottom Max rendere
         Value v -> fromMaybe "" $ prettyPrintValue v
 
 renderWithAttrs :: Maybe E.Path -> Maybe TypeError -> Renderer n -> Widget n
-renderWithAttrs maybeSelectionPath maybeTypeError renderer = highlightIfSelected widget where
+renderWithAttrs maybeSelectionPath maybeTypeError renderer = highlightIfSelected $ makeRedIfHasError widget where
     highlightIfSelected = if selected then highlight else id
     selected = maybeSelectionPath == Just []
     makeRedIfHasError = if hasError then makeRed else id
     hasError = maybe False hasErrorAtRoot maybeTypeError
     makeRed = modifyDefAttr $ flip withForeColor red
-    widget = renderer makeRedIfHasError (RenderChild renderChild)
+    widget = renderer $ RenderChild renderChild
     renderChild index = renderWithAttrs (getChildPath maybeSelectionPath index) (getChildTypeError maybeTypeError index)
 
 renderExpr :: E.Expr -> Renderer n
-renderExpr expr makeRedIfHasError (RenderChild renderChild) = case expr of
-    E.Ref exprName -> makeRedIfHasError $ str exprName
-    E.Var var -> makeRedIfHasError $ str var
-    E.Fn alternatives -> makeRedIfHasError $ str "λ" <+> vBox (zipWith renderChild [0..] $ renderAlternative <$> NonEmpty.toList alternatives) where
-    E.Call callee arg -> renderedCallee <=> (callSymbol <+> renderedArg) where
+renderExpr expr (RenderChild renderChild) = case expr of
+    E.Ref exprName -> str exprName
+    E.Var var -> str var
+    E.Fn alternatives -> str "λ" <+> vBox (zipWith renderChild [0..] $ renderAlternative <$> NonEmpty.toList alternatives) where
+    E.Call callee arg -> renderedCallee <=> indent renderedArg where
         renderedCallee = renderChild 0 (renderExpr callee)
-        callSymbol = makeRedIfHasError $ str "└ "
         renderedArg = renderChild 1 (renderExpr arg)
-    E.Constructor name -> makeRedIfHasError $ str name
-    E.Int n -> makeRedIfHasError . str $ show n
-    E.Equals -> makeRedIfHasError $ str "="
-    E.Plus -> makeRedIfHasError $ str "+"
-    E.Minus -> makeRedIfHasError $ str "-"
-    E.Times -> makeRedIfHasError $ str "*"
+    E.Constructor name -> str name
+    E.Int n -> str $ show n
+    E.Equals -> str "="
+    E.Plus -> str "+"
+    E.Minus -> str "-"
+    E.Times -> str "*"
 
 renderAlternative :: E.Alternative -> Renderer n
-renderAlternative (pattern, expr) makeRedIfHasError (RenderChild renderChild) =
-    makeRedIfHasError $ renderChild 0 (renderPattern pattern) <=> indent (renderChild 1 (renderExpr expr))
+renderAlternative (pattern, expr) (RenderChild renderChild) =
+    renderChild 0 (renderPattern pattern) <=> indent (renderChild 1 (renderExpr expr))
 
 renderPattern :: P.Pattern -> Renderer n
-renderPattern pattern makeRedIfHasError (RenderChild renderChild) = makeRedIfHasError $ case pattern of
+renderPattern pattern (RenderChild renderChild) = case pattern of
     P.Var var -> str var
     P.Constructor name patterns -> hBox $ intersperse (str " ") (str name : renderedChildren) where
         renderedChildren = zipWith renderChild [0..] renderers
