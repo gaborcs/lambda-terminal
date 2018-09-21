@@ -200,7 +200,7 @@ handleEvent appState event = case event of
             Just exprAtPath -> liftIO getNewAppState >>= continue where
                 getNewAppState = AppState newLocationHistory inferResult <$> getNewEvalResult
                 newLocationHistory = (exprName, path) NonEmpty.:| past
-                getNewEvalResult = createEvalResult $ exprAtPath
+                getNewEvalResult = createEvalResult exprAtPath
             Nothing -> continue appState
         parentPath = if null selectionPath then [] else init selectionPath
         nextPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath + 1]
