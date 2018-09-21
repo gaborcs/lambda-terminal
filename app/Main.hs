@@ -3,6 +3,7 @@ module Main where
 import Control.DeepSeq
 import Control.Exception.Base (evaluate)
 import Control.Monad.IO.Class
+import Data.List
 import Data.Maybe
 import System.Timeout
 import Brick hiding (Location)
@@ -116,7 +117,7 @@ renderAlternative (pattern, expr) makeRedIfHasError (RenderChild renderChild) =
 renderPattern :: P.Pattern -> Renderer n
 renderPattern pattern makeRedIfHasError (RenderChild renderChild) = makeRedIfHasError $ case pattern of
     P.Var var -> str var
-    P.Constructor name patterns -> str name <=> vBox (indent <$> renderedChildren) where
+    P.Constructor name patterns -> hBox $ intersperse (str " ") (str name : renderedChildren) where
         renderedChildren = zipWith renderChild [0..] renderers
         renderers = renderPattern <$> patterns
 
