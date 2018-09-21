@@ -1,4 +1,4 @@
-module PrettyPrintType where
+module PrettyPrintType (prettyPrintType) where
 
 import Control.Monad
 import qualified Type as T
