@@ -27,7 +27,7 @@ type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recen
 type Location = (E.ExprName, E.Path)
 data EvalResult = Timeout | Error | Value V.Value
 data Selectable = Expr E.Expr | Alternative E.Alternative | Pattern P.Pattern
-newtype RenderChild n = RenderChild (E.ChildIndex -> ((Widget n -> Widget n) -> RenderChild n -> Widget n) -> Widget n)
+newtype RenderChild n = RenderChild (E.ChildIndex -> Renderer n -> Widget n)
 type Renderer n = (Widget n -> Widget n) -> RenderChild n -> Widget n
 
 main :: IO ()
