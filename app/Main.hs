@@ -99,15 +99,22 @@ renderExpr expr (RenderChild renderChild) = case expr of
     E.Ref exprName -> str exprName
     E.Var var -> str var
     E.Fn alternatives -> str "λ" <+> vBox (zipWith renderChild [0..] $ renderAlternative <$> NonEmpty.toList alternatives) where
-    E.Call callee arg -> renderedCallee <=> indent renderedArg where
+    E.Call callee arg -> renderedCallee <+> str " " <+> withParensIf isArgComplex renderedArg where
         renderedCallee = renderChild 0 (renderExpr callee)
         renderedArg = renderChild 1 (renderExpr arg)
+        isArgComplex = case arg of
+            E.Fn _ -> True
+            E.Call _ _ -> True
+            _ -> False
     E.Constructor name -> str name
     E.Int n -> str $ show n
     E.Equals -> str "="
     E.Plus -> str "+"
     E.Minus -> str "-"
     E.Times -> str "*"
+
+withParensIf :: Bool -> Widget n -> Widget n
+withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
 renderAlternative :: E.Alternative -> Renderer n
 renderAlternative (pattern, expr) (RenderChild renderChild) =
