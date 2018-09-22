@@ -191,10 +191,10 @@ getChildInPattern pattern index = case pattern of
 
 handleEvent :: AppState -> BrickEvent n e -> EventM n (Next AppState)
 handleEvent appState event = case event of
-    VtyEvent (EvKey KUp []) -> nav prevPath
-    VtyEvent (EvKey KDown []) -> nav nextPath
-    VtyEvent (EvKey KLeft []) -> nav parentPath
-    VtyEvent (EvKey KRight []) -> nav pathToFirstChildOfSelected
+    VtyEvent (EvKey KUp []) -> nav parentPath
+    VtyEvent (EvKey KDown []) -> nav pathToFirstChildOfSelected
+    VtyEvent (EvKey KLeft []) -> nav prevSiblingPath
+    VtyEvent (EvKey KRight []) -> nav nextSiblingPath
     VtyEvent (EvKey KEnter []) -> goToDefinition
     VtyEvent (EvKey KEsc []) -> goBack
     VtyEvent (EvKey (KChar 'q') []) -> halt appState
@@ -210,10 +210,10 @@ handleEvent appState event = case event of
                 getNewEvalResult = createEvalResult exprAtPath
             Nothing -> continue appState
         parentPath = if null selectionPath then [] else init selectionPath
-        nextPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath + 1]
-        prevPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath - 1]
-        selectedExpr = getExprAtPath selectionPath
         pathToFirstChildOfSelected = selectionPath ++ [0]
+        prevSiblingPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath - 1]
+        nextSiblingPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath + 1]
+        selectedExpr = getExprAtPath selectionPath
         getExprAtPath path = getItemAtPathInExpr path expr
         goToDefinition = case selectedExpr of
             Just (Expr (E.Ref exprName)) ->
