@@ -27,8 +27,10 @@ type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recen
 type Location = (E.ExprName, E.Path)
 data EvalResult = Timeout | Error | Value V.Value
 data Selectable = Expr E.Expr | Alternative E.Alternative | Pattern P.Pattern
-newtype RenderChild n = RenderChild (E.ChildIndex -> Renderer n -> Widget n)
-type Renderer n = RenderChild n -> Widget n
+newtype RenderChild n = RenderChild (E.ChildIndex -> Renderer n -> RenderResult n)
+type Renderer n = RenderChild n -> RenderResult n
+type RenderResult n = (RenderResultType, Widget n)
+data RenderResultType = OneWord | OneLine | MultiLine deriving Eq
 
 main :: IO ()
 main = do
@@ -71,7 +73,7 @@ draw :: AppState -> [Widget n]
 draw (AppState locationHistory inferResult evalResult) = [ padBottom Max renderedExpr <=> str bottomStr ] where
     (exprName, selectionPath) = NonEmpty.head locationHistory
     expr = fromJust $ Map.lookup exprName defs
-    renderedExpr = renderWithAttrs (Just selectionPath) maybeTypeError (renderExpr expr)
+    (_, renderedExpr) = renderWithAttrs (Just selectionPath) maybeTypeError (renderExpr expr)
     maybeTypeError = case inferResult of
         TypeError typeError -> Just typeError
         _ -> Nothing
@@ -84,47 +86,46 @@ draw (AppState locationHistory inferResult evalResult) = [ padBottom Max rendere
         Error -> ""
         Value v -> fromMaybe "" $ prettyPrintValue v
 
-renderWithAttrs :: Maybe E.Path -> Maybe TypeError -> Renderer n -> Widget n
-renderWithAttrs maybeSelectionPath maybeTypeError renderer = highlightIfSelected $ makeRedIfHasError widget where
+renderWithAttrs :: Maybe E.Path -> Maybe TypeError -> Renderer n -> RenderResult n
+renderWithAttrs maybeSelectionPath maybeTypeError renderer = (renderResultType, highlightIfSelected $ makeRedIfHasError widget) where
     highlightIfSelected = if selected then highlight else id
     selected = maybeSelectionPath == Just []
     makeRedIfHasError = if hasError then makeRed else id
     hasError = maybe False hasErrorAtRoot maybeTypeError
     makeRed = modifyDefAttr $ flip withForeColor red
-    widget = renderer $ RenderChild renderChild
+    (renderResultType, widget) = renderer $ RenderChild renderChild
     renderChild index = renderWithAttrs (getChildPath maybeSelectionPath index) (getChildTypeError maybeTypeError index)
 
 renderExpr :: E.Expr -> Renderer n
 renderExpr expr (RenderChild renderChild) = case expr of
-    E.Ref exprName -> str exprName
-    E.Var var -> str var
-    E.Fn alternatives -> str "λ" <+> vBox (zipWith renderChild [0..] $ renderAlternative <$> NonEmpty.toList alternatives) where
-    E.Call callee arg -> renderedCallee <+> str " " <+> withParensIf isArgComplex renderedArg where
-        renderedCallee = renderChild 0 (renderExpr callee)
-        renderedArg = renderChild 1 (renderExpr arg)
-        isArgComplex = case arg of
-            E.Fn _ -> True
-            E.Call _ _ -> True
-            _ -> False
-    E.Constructor name -> str name
-    E.Int n -> str $ show n
-    E.Equals -> str "="
-    E.Plus -> str "+"
-    E.Minus -> str "-"
-    E.Times -> str "*"
-
-withParensIf :: Bool -> Widget n -> Widget n
-withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
+    E.Ref exprName -> (OneWord, str exprName)
+    E.Var var -> (OneWord, str var)
+    E.Fn alternatives -> (MultiLine, str "λ" <+> vBox renderedAlternatives) where
+        renderedAlternatives = fmap snd $ zipWith renderChild [0..] $ renderAlternative <$> NonEmpty.toList alternatives
+    E.Call callee arg ->
+        if calleeResultType == MultiLine || argResultType /= OneWord
+        then (MultiLine, renderedCallee <=> indent renderedArg)
+        else (OneLine, renderedCallee <+> str " " <+> renderedArg)
+        where
+            (calleeResultType, renderedCallee) = renderChild 0 (renderExpr callee)
+            (argResultType, renderedArg) = renderChild 1 (renderExpr arg)
+    E.Constructor name -> (OneWord, str name)
+    E.Int n -> (OneWord, str $ show n)
+    E.Equals -> (OneWord, str "=")
+    E.Plus -> (OneWord, str "+")
+    E.Minus -> (OneWord, str "-")
+    E.Times -> (OneWord, str "*")
 
 renderAlternative :: E.Alternative -> Renderer n
-renderAlternative (pattern, expr) (RenderChild renderChild) =
-    renderChild 0 (renderPattern pattern) <=> indent (renderChild 1 (renderExpr expr))
+renderAlternative (pattern, expr) (RenderChild renderChild) = (MultiLine, renderedPattern <=> indent renderedExpr) where
+    (_, renderedPattern) = renderChild 0 $ renderPattern pattern
+    (_, renderedExpr) = renderChild 1 $ renderExpr expr
 
 renderPattern :: P.Pattern -> Renderer n
 renderPattern pattern (RenderChild renderChild) = case pattern of
-    P.Var var -> str var
-    P.Constructor name patterns -> hBox $ intersperse (str " ") (str name : renderedChildren) where
-        renderedChildren = zipWith renderChild [0..] renderers
+    P.Var var -> (OneWord, str var)
+    P.Constructor name patterns -> (OneLine, hBox $ intersperse (str " ") (str name : renderedChildren)) where
+        renderedChildren = fmap snd $ zipWith renderChild [0..] renderers
         renderers = renderPattern <$> patterns
 
 indent :: Widget n -> Widget n
