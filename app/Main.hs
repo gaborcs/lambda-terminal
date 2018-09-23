@@ -101,18 +101,21 @@ renderExpr :: E.Expr -> Renderer n
 renderExpr expr renderMode (RenderChild renderChild) = case expr of
     E.Ref exprName -> (OneWord, str exprName)
     E.Var var -> (OneWord, str var)
-    E.Fn alternatives -> (MultiLine, str "λ" <+> vBox renderedAlternatives) where
-        renderedAlternatives = fmap snd $ zipWith renderChild [0..] $ renderAlternative <$> NonEmpty.toList alternatives
-    E.Call callee arg -> case renderMode of
-        Parens -> (OneLine, renderedCallee <+> str " " <+> withParensIf (argResultType /= OneWord) renderedArg)
-        NoParens ->
-            if calleeResultType == MultiLine || argResultType /= OneWord
-            then (MultiLine, renderedCallee <=> indent renderedArg)
-            else (OneLine, renderedCallee <+> str " " <+> renderedArg)
-        OneWordPerLine -> (MultiLine, renderedCallee <=> indent renderedArg)
+    E.Fn alternatives -> case alternativeResults of
+        [(resultType, widget)] -> (resultType, str "λ" <+> widget)
+        _ -> (MultiLine, str "λ" <+> vBox renderedAlternatives)
         where
-            (calleeResultType, renderedCallee) = renderChild 0 (renderExpr callee)
-            (argResultType, renderedArg) = renderChild 1 (renderExpr arg)
+            alternativeResults = zipWith renderChild [0..] $ renderAlternative <$> NonEmpty.toList alternatives
+            renderedAlternatives = map snd alternativeResults
+    E.Call callee arg -> if shouldBeMultiLine then multiLineResult else oneLineResult where
+        shouldBeMultiLine = case renderMode of
+            Parens -> calleeResultType == MultiLine || argResultType == MultiLine
+            NoParens -> calleeResultType == MultiLine || argResultType /= OneWord
+            OneWordPerLine -> True
+        multiLineResult = (MultiLine, renderedCallee <=> indent renderedArg)
+        oneLineResult = (OneLine, renderedCallee <+> str " " <+> withParensIf (argResultType /= OneWord) renderedArg)
+        (calleeResultType, renderedCallee) = renderChild 0 (renderExpr callee)
+        (argResultType, renderedArg) = renderChild 1 (renderExpr arg)
     E.Constructor name -> (OneWord, str name)
     E.Int n -> (OneWord, str $ show n)
     E.Equals -> (OneWord, str "=")
@@ -124,9 +127,13 @@ withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
 renderAlternative :: E.Alternative -> Renderer n
-renderAlternative (pattern, expr) renderMode (RenderChild renderChild) = (MultiLine, renderedPattern <=> indent renderedExpr) where
-    (_, renderedPattern) = renderChild 0 $ renderPattern pattern
-    (_, renderedExpr) = renderChild 1 $ renderExpr expr
+renderAlternative (pattern, expr) renderMode (RenderChild renderChild) =
+    if exprResultType == MultiLine
+    then (MultiLine, renderedPattern <+> str " ->" <=> indent renderedExpr)
+    else (OneLine, renderedPattern <+> str " -> " <+> renderedExpr)
+    where
+        (_, renderedPattern) = renderChild 0 $ renderPattern pattern
+        (exprResultType, renderedExpr) = renderChild 1 $ renderExpr expr
 
 renderPattern :: P.Pattern -> Renderer n
 renderPattern pattern renderMode (RenderChild renderChild) = case pattern of
