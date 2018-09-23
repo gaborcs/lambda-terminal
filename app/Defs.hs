@@ -20,5 +20,5 @@ defs = Map.fromList
         (Call (Call (Constructor "Cons") (Var "x")) (Call (Call (Ref "InfList.take") (Call (Call Minus (Var "n")) (Int 1))) (Var "xs")))))
     , ("const", fn "x" . fn "y" $ Var "x")
     , ("increment", Call Plus $ Int 1)
-    , ("main", Call (Call (Constructor "Just") (Call (Ref "factorial") (Call (Call (Call (Ref "const") (Ref "increment")) (Int 1)) (Int 2)))) (Call (Call (Ref "InfList.take") (Int 7)) (Ref "fibonacci")))
+    , ("main", Call (Call (Ref "const") (Call (Ref "factorial") (Call (Ref "increment") (Int 4)))) (Call (Call (Ref "InfList.take") (Int 7)) (Ref "fibonacci")))
     ]
