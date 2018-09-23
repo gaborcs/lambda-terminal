@@ -22,13 +22,14 @@ import qualified Pattern as P
 import qualified Type as T
 import qualified Value as V
 
-data AppState = AppState LocationHistory InferResult EvalResult
+data AppState = AppState RenderMode LocationHistory InferResult EvalResult
+data RenderMode = Parens | NoParens | OneWordPerLine deriving Eq
 type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recent
 type Location = (E.ExprName, E.Path)
 data EvalResult = Timeout | Error | Value V.Value
 data Selectable = Expr E.Expr | Alternative E.Alternative | Pattern P.Pattern
 newtype RenderChild n = RenderChild (E.ChildIndex -> Renderer n -> RenderResult n)
-type Renderer n = RenderChild n -> RenderResult n
+type Renderer n = RenderMode -> RenderChild n -> RenderResult n
 type RenderResult n = (RenderResultType, Widget n)
 data RenderResultType = OneWord | OneLine | MultiLine deriving Eq
 
@@ -47,7 +48,7 @@ createAppState locationHistory = do
     let inferResult = inferType constructorTypes defs expr
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
     evalResult <- createEvalResult selected
-    return $ AppState locationHistory inferResult evalResult
+    return $ AppState NoParens locationHistory inferResult evalResult
 
 createEvalResult :: Selectable -> IO EvalResult
 createEvalResult selectable = do
@@ -70,10 +71,10 @@ app = App
     , appAttrMap = const $ attrMap defAttr [] }
 
 draw :: AppState -> [Widget n]
-draw (AppState locationHistory inferResult evalResult) = [ padBottom Max renderedExpr <=> str bottomStr ] where
+draw (AppState renderMode locationHistory inferResult evalResult) = [ padBottom Max renderedExpr <=> str bottomStr ] where
     (exprName, selectionPath) = NonEmpty.head locationHistory
     expr = fromJust $ Map.lookup exprName defs
-    (_, renderedExpr) = renderWithAttrs (Just selectionPath) maybeTypeError (renderExpr expr)
+    (_, renderedExpr) = renderWithAttrs renderMode (Just selectionPath) maybeTypeError (renderExpr expr)
     maybeTypeError = case inferResult of
         TypeError typeError -> Just typeError
         _ -> Nothing
@@ -86,26 +87,29 @@ draw (AppState locationHistory inferResult evalResult) = [ padBottom Max rendere
         Error -> ""
         Value v -> fromMaybe "" $ prettyPrintValue v
 
-renderWithAttrs :: Maybe E.Path -> Maybe TypeError -> Renderer n -> RenderResult n
-renderWithAttrs maybeSelectionPath maybeTypeError renderer = (renderResultType, highlightIfSelected $ makeRedIfHasError widget) where
+renderWithAttrs :: RenderMode -> Maybe E.Path -> Maybe TypeError -> Renderer n -> RenderResult n
+renderWithAttrs renderMode maybeSelectionPath maybeTypeError renderer = (renderResultType, highlightIfSelected $ makeRedIfHasError widget) where
     highlightIfSelected = if selected then highlight else id
     selected = maybeSelectionPath == Just []
     makeRedIfHasError = if hasError then makeRed else id
     hasError = maybe False hasErrorAtRoot maybeTypeError
     makeRed = modifyDefAttr $ flip withForeColor red
-    (renderResultType, widget) = renderer $ RenderChild renderChild
-    renderChild index = renderWithAttrs (getChildPath maybeSelectionPath index) (getChildTypeError maybeTypeError index)
+    (renderResultType, widget) = renderer renderMode $ RenderChild renderChild
+    renderChild index = renderWithAttrs renderMode (getChildPath maybeSelectionPath index) (getChildTypeError maybeTypeError index)
 
 renderExpr :: E.Expr -> Renderer n
-renderExpr expr (RenderChild renderChild) = case expr of
+renderExpr expr renderMode (RenderChild renderChild) = case expr of
     E.Ref exprName -> (OneWord, str exprName)
     E.Var var -> (OneWord, str var)
     E.Fn alternatives -> (MultiLine, str "λ" <+> vBox renderedAlternatives) where
         renderedAlternatives = fmap snd $ zipWith renderChild [0..] $ renderAlternative <$> NonEmpty.toList alternatives
-    E.Call callee arg ->
-        if calleeResultType == MultiLine || argResultType /= OneWord
-        then (MultiLine, renderedCallee <=> indent renderedArg)
-        else (OneLine, renderedCallee <+> str " " <+> renderedArg)
+    E.Call callee arg -> case renderMode of
+        Parens -> (OneLine, renderedCallee <+> str " " <+> withParensIf (argResultType /= OneWord) renderedArg)
+        NoParens ->
+            if calleeResultType == MultiLine || argResultType /= OneWord
+            then (MultiLine, renderedCallee <=> indent renderedArg)
+            else (OneLine, renderedCallee <+> str " " <+> renderedArg)
+        OneWordPerLine -> (MultiLine, renderedCallee <=> indent renderedArg)
         where
             (calleeResultType, renderedCallee) = renderChild 0 (renderExpr callee)
             (argResultType, renderedArg) = renderChild 1 (renderExpr arg)
@@ -116,13 +120,16 @@ renderExpr expr (RenderChild renderChild) = case expr of
     E.Minus -> (OneWord, str "-")
     E.Times -> (OneWord, str "*")
 
+withParensIf :: Bool -> Widget n -> Widget n
+withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
+
 renderAlternative :: E.Alternative -> Renderer n
-renderAlternative (pattern, expr) (RenderChild renderChild) = (MultiLine, renderedPattern <=> indent renderedExpr) where
+renderAlternative (pattern, expr) renderMode (RenderChild renderChild) = (MultiLine, renderedPattern <=> indent renderedExpr) where
     (_, renderedPattern) = renderChild 0 $ renderPattern pattern
     (_, renderedExpr) = renderChild 1 $ renderExpr expr
 
 renderPattern :: P.Pattern -> Renderer n
-renderPattern pattern (RenderChild renderChild) = case pattern of
+renderPattern pattern renderMode (RenderChild renderChild) = case pattern of
     P.Var var -> (OneWord, str var)
     P.Constructor name patterns -> (OneLine, hBox $ intersperse (str " ") (str name : renderedChildren)) where
         renderedChildren = fmap snd $ zipWith renderChild [0..] renderers
@@ -197,15 +204,17 @@ handleEvent appState event = case event of
     VtyEvent (EvKey KRight []) -> nav nextSiblingPath
     VtyEvent (EvKey KEnter []) -> goToDefinition
     VtyEvent (EvKey KEsc []) -> goBack
+    VtyEvent (EvKey (KChar 'r') []) -> switchToNextRenderMode
+    VtyEvent (EvKey (KChar 'R') []) -> switchToPrevRenderMode
     VtyEvent (EvKey (KChar 'q') []) -> halt appState
     _ -> continue appState
     where
-        AppState locationHistory inferResult maybeEvalResult = appState
+        AppState renderMode locationHistory inferResult maybeEvalResult = appState
         (exprName, selectionPath) NonEmpty.:| past = locationHistory
         expr = fromJust $ Map.lookup exprName defs
         nav path = case getExprAtPath path of
             Just exprAtPath -> liftIO getNewAppState >>= continue where
-                getNewAppState = AppState newLocationHistory inferResult <$> getNewEvalResult
+                getNewAppState = AppState renderMode newLocationHistory inferResult <$> getNewEvalResult
                 newLocationHistory = (exprName, path) NonEmpty.:| past
                 getNewEvalResult = createEvalResult exprAtPath
             Nothing -> continue appState
@@ -222,3 +231,10 @@ handleEvent appState event = case event of
                 else continue appState
             _ -> continue appState
         goBack = liftIO (createAppState $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
+        switchToNextRenderMode = switchRenderMode nextRenderMode
+        switchToPrevRenderMode = switchRenderMode prevRenderMode
+        switchRenderMode newRenderMode = continue $ AppState newRenderMode locationHistory inferResult maybeEvalResult
+        nextRenderMode = renderModes !! mod (renderModeIndex + 1) (length renderModes)
+        prevRenderMode = renderModes !! mod (renderModeIndex - 1) (length renderModes)
+        renderModeIndex = fromJust $ elemIndex renderMode renderModes
+        renderModes = [Parens, NoParens, OneWordPerLine]
