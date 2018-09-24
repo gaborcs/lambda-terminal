@@ -101,12 +101,12 @@ renderExpr :: E.Expr -> Renderer n
 renderExpr expr renderMode (RenderChild renderChild) = case expr of
     E.Ref exprName -> (OneWord, str exprName)
     E.Var var -> (OneWord, str var)
-    E.Fn alternatives -> case alternativeResults of
-        [(resultType, widget)] -> (resultType, str "λ" <+> widget)
-        _ -> (MultiLine, str "λ" <+> vBox renderedAlternatives)
-        where
-            alternativeResults = zipWith renderChild [0..] $ renderAlternative <$> NonEmpty.toList alternatives
-            renderedAlternatives = map snd alternativeResults
+    E.Fn alternatives -> if null restOfAltResults then singleAltResult else multiAltResult where
+        singleAltResult = (firstAltResultType, str "λ " <+> firstAltWidget)
+        multiAltResult = (MultiLine, vBox $ str "λ " <+> firstAltWidget : map (str "| " <+>) restOfAltWidgets)
+        (firstAltResultType, firstAltWidget) NonEmpty.:| restOfAltResults =
+            NonEmpty.zipWith renderChild (NonEmpty.fromList [0..]) $ NonEmpty.map renderAlternative alternatives
+        restOfAltWidgets = map snd restOfAltResults
     E.Call callee arg -> if shouldBeMultiLine then multiLineResult else oneLineResult where
         shouldBeMultiLine = case renderMode of
             Parens -> calleeResultType == MultiLine || argResultType == MultiLine
@@ -129,7 +129,7 @@ withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 renderAlternative :: E.Alternative -> Renderer n
 renderAlternative (pattern, expr) renderMode (RenderChild renderChild) =
     if exprResultType == MultiLine
-    then (MultiLine, renderedPattern <+> str " ->" <=> indent renderedExpr)
+    then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
     else (OneLine, renderedPattern <+> str " -> " <+> renderedExpr)
     where
         (_, renderedPattern) = renderChild 0 $ renderPattern pattern
