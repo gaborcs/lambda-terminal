@@ -33,7 +33,7 @@ spec = do
         E.Call (E.Constructor "Just") (E.Int 1) `hasType` T.Constructor "Maybe" [T.Int]
     it "indicates where type errors happen" $ do
         E.Call (E.Int 1) (E.Int 1) `failsAtPath` []
-        E.fn "x" (E.Call (E.Int 1) (E.Int 1)) `failsAtPath` [0, 1]
+        E.fn "x" (E.Call (E.Int 1) (E.Int 1)) `failsAtPath` [1]
         E.Call (E.Ref "inc") (E.Ref "id") `failsAtPath` []
 
 constructorTypes :: Map.Map E.ConstructorName T.Type

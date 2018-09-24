@@ -27,7 +27,7 @@ data RenderMode = Parens | NoParens | OneWordPerLine deriving Eq
 type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recent
 type Location = (E.ExprName, E.Path)
 data EvalResult = Timeout | Error | Value V.Value
-data Selectable = Expr E.Expr | Alternative E.Alternative | Pattern P.Pattern
+data Selectable = Expr E.Expr | Pattern P.Pattern
 newtype RenderChild n = RenderChild (E.ChildIndex -> Renderer n -> RenderResult n)
 type Renderer n = RenderMode -> RenderChild n -> RenderResult n
 type RenderResult n = (RenderResultType, Widget n)
@@ -105,7 +105,7 @@ renderExpr expr renderMode (RenderChild renderChild) = case expr of
         singleAltResult = (firstAltResultType, str "λ " <+> firstAltWidget)
         multiAltResult = (MultiLine, vBox $ str "λ " <+> firstAltWidget : map (str "| " <+>) restOfAltWidgets)
         (firstAltResultType, firstAltWidget) NonEmpty.:| restOfAltResults =
-            NonEmpty.zipWith renderChild (NonEmpty.fromList [0..]) $ NonEmpty.map renderAlternative alternatives
+            NonEmpty.zipWith (renderAlternative $ RenderChild renderChild) (NonEmpty.fromList [0..]) alternatives
         restOfAltWidgets = map snd restOfAltResults
     E.Call callee arg -> if shouldBeMultiLine then multiLineResult else oneLineResult where
         shouldBeMultiLine = case renderMode of
@@ -126,14 +126,14 @@ renderExpr expr renderMode (RenderChild renderChild) = case expr of
 withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
-renderAlternative :: E.Alternative -> Renderer n
-renderAlternative (pattern, expr) renderMode (RenderChild renderChild) =
+renderAlternative :: RenderChild n -> Int -> E.Alternative -> RenderResult n
+renderAlternative (RenderChild renderChild) alternativeIndex (pattern, expr) =
     if exprResultType == MultiLine
     then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
     else (OneLine, renderedPattern <+> str " -> " <+> renderedExpr)
     where
-        (_, renderedPattern) = renderChild 0 $ renderPattern pattern
-        (exprResultType, renderedExpr) = renderChild 1 $ renderExpr expr
+        (_, renderedPattern) = renderChild (2 * alternativeIndex) $ renderPattern pattern
+        (exprResultType, renderedExpr) = renderChild (2 * alternativeIndex + 1) $ renderExpr expr
 
 renderPattern :: P.Pattern -> Renderer n
 renderPattern pattern renderMode (RenderChild renderChild) = case pattern of
@@ -182,20 +182,16 @@ getItemAtPathInSelectable path selectable = case path of
 getChildInSelectable :: Selectable -> E.ChildIndex -> Maybe Selectable
 getChildInSelectable selectable = case selectable of
     Expr expr -> getChildInExpr expr
-    Alternative alt -> getChildInAlternative alt
     Pattern pattern -> getChildInPattern pattern
 
 getChildInExpr :: E.Expr -> E.ChildIndex -> Maybe Selectable
 getChildInExpr expr index = case (expr, index) of
-    (E.Fn alternatives, _) -> Alternative <$> getItemAtIndex (NonEmpty.toList alternatives) index
+    (E.Fn alternatives, _) -> do
+        let altIndex = div index 2
+        (pattern, expr) <- getItemAtIndex (NonEmpty.toList alternatives) altIndex
+        return $ if even index then Pattern pattern else Expr expr
     (E.Call callee _, 0) -> Just $ Expr callee
     (E.Call _ arg, 1) -> Just $ Expr arg
-    _ -> Nothing
-
-getChildInAlternative :: E.Alternative -> E.ChildIndex -> Maybe Selectable
-getChildInAlternative (pattern, expr) index = case index of
-    0 -> Just $ Pattern pattern
-    1 -> Just $ Expr expr
     _ -> Nothing
 
 getChildInPattern :: P.Pattern -> E.ChildIndex -> Maybe Selectable

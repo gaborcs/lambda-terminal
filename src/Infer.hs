@@ -44,10 +44,11 @@ infer instantiateConstructorType defs env expr = case expr of
         Just t -> InferTree t [] []
         Nothing -> throw UnboundVar
     E.Fn alternatives -> do
-        altInferTrees <- traverse (inferAlternative instantiateConstructorType defs env) alternatives
-        let altTypes = (\(InferTree t _ _) -> t) <$> altInferTrees
+        altInferTreeTuples <- traverse (inferAlternative instantiateConstructorType defs env) alternatives
+        let inferTrees = NonEmpty.toList altInferTreeTuples >>= \(patternInferTree, exprInferTree) -> [patternInferTree, exprInferTree]
+        let altTypes = (\(InferTree patternType _ _, InferTree exprType _ _) -> T.Fn patternType exprType) <$> altInferTreeTuples
         let firstAltType NonEmpty.:| restOfAltTypes = altTypes
-        return $ InferTree firstAltType ((,) firstAltType <$> restOfAltTypes) (NonEmpty.toList altInferTrees)
+        return $ InferTree firstAltType ((,) firstAltType <$> restOfAltTypes) inferTrees
     E.Call callee arg -> do
         calleeTree@(InferTree calleeType _ _) <- infer instantiateConstructorType defs env callee
         argTree@(InferTree argType _ _) <- infer instantiateConstructorType defs env arg
@@ -62,11 +63,11 @@ infer instantiateConstructorType defs env expr = case expr of
     E.Minus -> return $ InferTree (binaryIntOp T.Int) [] []
     E.Times -> return $ InferTree (binaryIntOp T.Int) [] []
 
-inferAlternative :: (E.ConstructorName -> Infer T.Type) -> Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Alternative -> Infer InferTree
-inferAlternative inferConstructorType defs env (pattern, expr) = do
-    (patternInferTree@(InferTree patternType _ _), patternTypeEnv) <- inferPattern inferConstructorType pattern
-    exprInferTree@(InferTree exprType _ _) <- infer inferConstructorType defs (env <> patternTypeEnv) expr
-    return $ InferTree (T.Fn patternType exprType) [] [patternInferTree, exprInferTree]
+inferAlternative :: (E.ConstructorName -> Infer T.Type) -> Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Alternative -> Infer (InferTree, InferTree)
+inferAlternative instantiateConstructorType defs env (pattern, expr) = do
+    (patternInferTree, patternTypeEnv) <- inferPattern instantiateConstructorType pattern
+    exprInferTree <- infer instantiateConstructorType defs (Map.union patternTypeEnv env) expr
+    return (patternInferTree, exprInferTree)
 
 inferPattern :: (E.ConstructorName -> Infer T.Type) -> P.Pattern -> Infer (InferTree, TypeEnv)
 inferPattern instantiateConstructorType pattern = case pattern of
