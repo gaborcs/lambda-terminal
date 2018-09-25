@@ -7,6 +7,7 @@ import Data.List
 import Data.Maybe
 import System.Timeout
 import Brick hiding (Location)
+import Brick.Widgets.Border
 import Graphics.Vty
 import Eval
 import Infer
@@ -72,7 +73,8 @@ app = App
 
 draw :: AppState -> [Widget n]
 draw (AppState renderMode locationHistory inferResult evalResult) = [ layer ] where
-    layer = padBottom Max coloredExpr <=> str bottomStr
+    layer = hBorderWithLabel title <=> padBottom Max coloredExpr <=> str bottomStr
+    title = str $ "  " ++ exprName ++ "  "
     coloredExpr = modifyDefAttr (flip withForeColor gray) renderedExpr -- unselected parts of the expression are gray
     gray = rgbColor 128 128 128 -- this shade seems to work well on both light and dark backgrounds
     (exprName, selectionPath) = NonEmpty.head locationHistory
