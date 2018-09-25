@@ -71,7 +71,10 @@ app = App
     , appAttrMap = const $ attrMap defAttr [] }
 
 draw :: AppState -> [Widget n]
-draw (AppState renderMode locationHistory inferResult evalResult) = [ padBottom Max renderedExpr <=> str bottomStr ] where
+draw (AppState renderMode locationHistory inferResult evalResult) = [ layer ] where
+    layer = padBottom Max coloredExpr <=> str bottomStr
+    coloredExpr = modifyDefAttr (flip withForeColor gray) renderedExpr -- unselected parts of the expression are gray
+    gray = rgbColor 128 128 128 -- this shade seems to work well on both light and dark backgrounds
     (exprName, selectionPath) = NonEmpty.head locationHistory
     expr = fromJust $ Map.lookup exprName defs
     (_, renderedExpr) = renderWithAttrs renderMode (Just selectionPath) maybeTypeError (renderExpr expr)
@@ -146,7 +149,7 @@ indent :: Widget n -> Widget n
 indent w = str "  " <+> w
 
 highlight :: Widget n -> Widget n
-highlight = modifyDefAttr $ flip withStyle bold
+highlight = modifyDefAttr $ const defAttr -- the gray foreground color is changed back to the default
 
 getChildPath :: Maybe E.Path -> E.ChildIndex -> Maybe E.Path
 getChildPath maybePath index = case maybePath of
