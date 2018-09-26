@@ -16,74 +16,90 @@ type TypeError = [InferResult]
 type TypeEnv = Map.Map E.VarName T.Type
 type Infer = State NextTVarId
 type NextTVarId = T.VarId
-data InferError = UnboundRef | UnboundVar | UnboundConstructor deriving Show
+data InferError = UnboundRef | UnboundConstructor deriving Show
 instance Exception InferError
-data InferTree = InferTree T.Type [TypeEqualityConstraint] [InferTree]
+data IntermediateTree = TypedIntermediate TypedIntermediateTree | UntypedIntermediate [IntermediateTree]
+data TypedIntermediateTree = TypedIntermediateTree T.Type [TypeEqualityConstraint] [TypedIntermediateTree]
 type TypeEqualityConstraint = (T.Type, T.Type)
 type Substitution = Map.Map T.VarId T.Type
-newtype ErrorTree = ErrorTree (Map.Map E.ChildIndex ErrorTree)
 data InfiniteType = InfiniteType
 
 inferType :: Map.Map E.ConstructorName T.Type -> Map.Map E.ExprName E.Expr -> E.Expr -> InferResult
-inferType constructorTypes defs expr = createInferResult subst maybeErrorTree inferTree where
-    inferTree = evalState (infer instantiateConstructorType (Map.map Right defs) Map.empty expr) 0
+inferType constructorTypes defs expr = solve intermediateTree where
+    intermediateTree = evalState (infer instantiateConstructorType (Map.map Right defs) Map.empty expr) 0
     instantiateConstructorType name = maybe (throw UnboundConstructor) instantiate $ Map.lookup name constructorTypes
-    (subst, maybeErrorTree) = solve inferTree
 
-infer :: (E.ConstructorName -> Infer T.Type) -> Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Expr -> Infer InferTree
+infer :: (E.ConstructorName -> Infer T.Type) -> Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Expr -> Infer IntermediateTree
 infer instantiateConstructorType defs env expr = case expr of
-    E.Hole -> InferTree <$> freshTVar <*> pure [] <*> pure []
+    E.Hole -> TypedIntermediate <$> (TypedIntermediateTree <$> freshTVar <*> pure [] <*> pure [])
     E.Ref ref -> case Map.lookup ref defs of
         Just (Right expr) -> do
             -- to handle recursion we create a type variable that will be used when
             -- the implementation of the expression refers to itself
             tv <- freshTVar
-            inferTree@(InferTree t _ _) <- infer instantiateConstructorType (Map.insert ref (Left tv) defs) env expr
-            return $ InferTree tv [(tv, t)] [inferTree]
-        Just (Left tv) -> return $ InferTree tv [] []
+            tree <- infer instantiateConstructorType (Map.insert ref (Left tv) defs) env expr
+            return $ case tree of
+                TypedIntermediate typedTree@(TypedIntermediateTree t _ _) ->
+                    TypedIntermediate $ TypedIntermediateTree tv [(tv, t)] [typedTree]
+                _ -> UntypedIntermediate []
+        Just (Left tv) -> return $ TypedIntermediate $ TypedIntermediateTree tv [] []
         Nothing -> throw UnboundRef
     E.Var var -> return $ case Map.lookup var env of
-        Just t -> InferTree t [] []
-        Nothing -> throw UnboundVar
+        Just t -> TypedIntermediate $ TypedIntermediateTree t [] []
+        Nothing -> UntypedIntermediate []
     E.Fn alternatives -> do
-        altInferTreeTuples <- traverse (inferAlternative instantiateConstructorType defs env) alternatives
-        let inferTrees = NonEmpty.toList altInferTreeTuples >>= \(patternInferTree, exprInferTree) -> [patternInferTree, exprInferTree]
-        let altTypes = (\(InferTree patternType _ _, InferTree exprType _ _) -> T.Fn patternType exprType) <$> altInferTreeTuples
-        let firstAltType NonEmpty.:| restOfAltTypes = altTypes
-        return $ InferTree firstAltType ((,) firstAltType <$> restOfAltTypes) inferTrees
+        altTreeTuples <- traverse (inferAlternative instantiateConstructorType defs env) alternatives
+        return $ case traverse (traverse getTypedIntermediate) altTreeTuples of
+            Just typedAltTreeTuples -> TypedIntermediate $
+                TypedIntermediateTree firstAltType ((,) firstAltType <$> restOfAltTypes) typedTrees where
+                    firstAltType NonEmpty.:| restOfAltTypes = getAltType <$> typedAltTreeTuples
+                    getAltType (TypedIntermediateTree patternType _ _, TypedIntermediateTree exprType _ _) = T.Fn patternType exprType
+                    typedTrees = NonEmpty.toList typedAltTreeTuples >>= \(patternTree, exprTree) -> [patternTree, exprTree]
+            Nothing -> UntypedIntermediate trees where
+                trees = NonEmpty.toList altTreeTuples >>= \(patternTree, exprTree) -> [TypedIntermediate patternTree, exprTree]
     E.Call callee arg -> do
-        calleeTree@(InferTree calleeType _ _) <- infer instantiateConstructorType defs env callee
-        argTree@(InferTree argType _ _) <- infer instantiateConstructorType defs env arg
-        resultType <- freshTVar
-        return $ InferTree resultType [(calleeType, T.Fn argType resultType)] [calleeTree, argTree]
+        calleeTree <- infer instantiateConstructorType defs env callee
+        argTree <- infer instantiateConstructorType defs env arg
+        case (calleeTree, argTree) of
+            (TypedIntermediate typedCalleeTree, TypedIntermediate typedArgTree) -> do
+                let TypedIntermediateTree calleeType _ _ = typedCalleeTree
+                let TypedIntermediateTree argType _ _ = typedArgTree
+                resultType <- freshTVar
+                let tree = TypedIntermediateTree resultType [(calleeType, T.Fn argType resultType)] [typedCalleeTree, typedArgTree]
+                return $ TypedIntermediate tree
+            _ -> return $ UntypedIntermediate [calleeTree, argTree]
     E.Constructor name -> do
         t <- instantiateConstructorType name
-        return $ InferTree t [] []
-    E.Int _ -> return $ InferTree T.Int [] []
-    E.Primitive p -> return $ InferTree (Primitive.getType p) [] []
+        return $ TypedIntermediate $ TypedIntermediateTree t [] []
+    E.Int _ -> return $ TypedIntermediate $ TypedIntermediateTree T.Int [] []
+    E.Primitive p -> return $ TypedIntermediate $ TypedIntermediateTree (Primitive.getType p) [] []
 
-inferAlternative :: (E.ConstructorName -> Infer T.Type) -> Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Alternative -> Infer (InferTree, InferTree)
+getTypedIntermediate :: IntermediateTree -> Maybe TypedIntermediateTree
+getTypedIntermediate (TypedIntermediate tree) = Just tree
+getTypedIntermediate _ = Nothing
+
+inferAlternative :: (E.ConstructorName -> Infer T.Type) -> Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Alternative -> Infer (TypedIntermediateTree, IntermediateTree)
 inferAlternative instantiateConstructorType defs env (pattern, expr) = do
-    (patternInferTree, patternTypeEnv) <- inferPattern instantiateConstructorType pattern
-    exprInferTree <- infer instantiateConstructorType defs (Map.union patternTypeEnv env) expr
-    return (patternInferTree, exprInferTree)
+    (patternTree, patternTypeEnv) <- inferPattern instantiateConstructorType pattern
+    exprTree <- infer instantiateConstructorType defs (Map.union patternTypeEnv env) expr
+    return (patternTree, exprTree)
 
-inferPattern :: (E.ConstructorName -> Infer T.Type) -> P.Pattern -> Infer (InferTree, TypeEnv)
+inferPattern :: (E.ConstructorName -> Infer T.Type) -> P.Pattern -> Infer (TypedIntermediateTree, TypeEnv)
 inferPattern instantiateConstructorType pattern = case pattern of
     P.Wildcard -> do
         tv <- freshTVar
-        return (InferTree tv [] [], Map.empty)
+        return (TypedIntermediateTree tv [] [], Map.empty)
     P.Var var -> do
         tv <- freshTVar
-        return (InferTree tv [] [], Map.singleton var tv)
+        return (TypedIntermediateTree tv [] [], Map.singleton var tv)
     P.Constructor name children -> do
         constructorType <- instantiateConstructorType name
         childResults <- traverse (inferPattern instantiateConstructorType) children
-        let childInferTrees = fst <$> childResults
+        let childTrees = fst <$> childResults
         let childTypeEnvs = snd <$> childResults
-        let childTypes = (\(InferTree t _ _) -> t) <$> childInferTrees
+        let childTypes = (\(TypedIntermediateTree t _ _) -> t) <$> childTrees
         tv <- freshTVar
-        return (InferTree tv [(constructorType, foldr T.Fn tv childTypes)] childInferTrees, mconcat childTypeEnvs)
+        return (TypedIntermediateTree tv [(constructorType, foldr T.Fn tv childTypes)] childTrees, mconcat childTypeEnvs)
 
 freshTVar :: Infer T.Type
 freshTVar = do
@@ -99,18 +115,29 @@ instantiate t = do
 pairWithFreshTVar :: T.VarId -> Infer (T.VarId, T.Type)
 pairWithFreshTVar var = (,) var <$> freshTVar
 
-solve :: InferTree -> (Substitution, Maybe ErrorTree)
-solve = solve' Map.empty
+solve :: IntermediateTree -> InferResult
+solve intermediateTree = applyToInferResult subst unsubstitutedInferResult where
+    (subst, unsubstitutedInferResult) = solve' Map.empty intermediateTree
 
-solve' :: Substitution -> InferTree -> (Substitution, Maybe ErrorTree)
-solve' initialSubst (InferTree _ constraints children) = (finalSubst, maybeErrorTree) where
-    (finalSubst, hasError) = foldl constraintReducer (substAfterSolvingChildren, False) constraints
+solve' :: Substitution -> IntermediateTree -> (Substitution, InferResult)
+solve' initialSubst tree = (finalSubst, inferResult) where
+    (maybeType, constraints, children) = case tree of
+        TypedIntermediate (TypedIntermediateTree t constraints children) -> (Just t, constraints, TypedIntermediate <$> children)
+        UntypedIntermediate children -> (Nothing, [], children)
+    (finalSubst, hasConstraintError) = foldl constraintReducer (substAfterSolvingChildren, False) constraints
     constraintReducer (s0, hasError) (t1, t2) = case unify (apply s0 t1) (apply s0 t2) of
         Just s1 -> (compose s1 s0, hasError)
         Nothing -> (s0, True)
-    (substAfterSolvingChildren, childErrorTrees) = foldl childrenReducer (initialSubst, Map.empty) $ zip [0..] children
-    childrenReducer (s0, errorTrees) (index, child) = maybe errorTrees (flip (Map.insert index) errorTrees) <$> solve' s0 child
-    maybeErrorTree = if hasError || not (Map.null childErrorTrees) then Just (ErrorTree childErrorTrees) else Nothing
+    (substAfterSolvingChildren, reversedChildInferResults) = foldl childrenReducer (initialSubst, []) children
+    childrenReducer (s0, reversedInferResults) child = (: reversedInferResults) <$> solve' s0 child
+    inferResult = case (maybeType, maybeTypeTrees) of
+        (Just t, Just typeTrees) | not hasConstraintError -> Typed $ TypeTree t typeTrees
+        _ -> TypeError childInferResults
+    maybeTypeTrees = traverse getTypeTree childInferResults
+    getTypeTree inferResult = case inferResult of
+        Typed typeTree -> Just typeTree
+        _ -> Nothing
+    childInferResults = reverse reversedChildInferResults
 
 compose :: Substitution -> Substitution -> Substitution
 compose s1 s2 = Map.map (apply s1) s2 `Map.union` s1
@@ -149,12 +176,13 @@ apply subst t = case t of
     T.Constructor name ts -> T.Constructor name $ apply subst <$> ts
     T.Int -> T.Int
 
-createInferResult :: Substitution -> Maybe ErrorTree -> InferTree -> InferResult
-createInferResult subst maybeErrorTree inferTree@(InferTree t _ inferTreeChildren) = case maybeErrorTree of
-    Nothing -> Typed $ createTypeTree inferTree where
-        createTypeTree (InferTree t _ children) = TypeTree (apply subst t) (createTypeTree <$> children)
-    Just (ErrorTree errorChildren) -> TypeError $ toInferResult <$> zip [0..] inferTreeChildren where
-        toInferResult (index, child) = createInferResult subst (Map.lookup index errorChildren) child
+applyToInferResult :: Substitution -> InferResult -> InferResult
+applyToInferResult subst inferResult = case inferResult of
+    Typed typeTree -> Typed $ applyToTypeTree subst typeTree
+    TypeError childResults -> TypeError $ applyToInferResult subst <$> childResults
+
+applyToTypeTree :: Substitution -> TypeTree -> TypeTree
+applyToTypeTree subst (TypeTree t children) = TypeTree (apply subst t) (applyToTypeTree subst <$> children)
 
 hasErrorAtRoot :: TypeError -> Bool
 hasErrorAtRoot = all isTyped
