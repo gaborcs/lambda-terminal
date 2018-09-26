@@ -67,6 +67,6 @@ hasErrorAtPath inferResult path = case inferResult of
     Typed _ -> expectationFailure "should have a type error"
     TypeError childResults -> case path of
         [] -> childResults `shouldSatisfy` hasErrorAtRoot
-        index:restOfPath -> case getItemAtIndex childResults index of
+        index:restOfPath -> case getItemAtIndex index childResults of
             Just childResult -> childResult `hasErrorAtPath` restOfPath
             Nothing -> expectationFailure "path doesn't exist"

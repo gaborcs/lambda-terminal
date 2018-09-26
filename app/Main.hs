@@ -39,18 +39,18 @@ main :: IO ()
 main = do
     let initialLocation = ("main", [])
     let initialLocationHistory = initialLocation NonEmpty.:| []
-    initialState <- createAppState Defs.defs initialLocationHistory
+    initialState <- createAppState Defs.defs NoParens initialLocationHistory
     defaultMain app initialState
     return ()
 
-createAppState :: Map.Map E.ExprName E.Expr -> LocationHistory -> IO AppState
-createAppState defs locationHistory = do
+createAppState :: Map.Map E.ExprName E.Expr -> RenderMode -> LocationHistory -> IO AppState
+createAppState defs renderMode locationHistory = do
     let (exprName, selectionPath) = NonEmpty.head locationHistory
     let expr = fromJust $ Map.lookup exprName defs
     let inferResult = inferType constructorTypes defs expr
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
     evalResult <- createEvalResult defs selected
-    return $ AppState defs NoParens locationHistory inferResult evalResult
+    return $ AppState defs renderMode locationHistory inferResult evalResult
 
 createEvalResult :: Map.Map E.ExprName E.Expr -> Selectable -> IO EvalResult
 createEvalResult defs selectable = do
@@ -105,6 +105,7 @@ renderWithAttrs renderMode maybeSelectionPath maybeTypeError renderer = (renderR
 
 renderExpr :: E.Expr -> Renderer n
 renderExpr expr renderMode (RenderChild renderChild) = case expr of
+    E.Hole -> (OneWord, str "_")
     E.Ref exprName -> (OneWord, str exprName)
     E.Var var -> (OneWord, str var)
     E.Fn alternatives -> if null restOfAltResults then singleAltResult else multiAltResult where
@@ -140,6 +141,7 @@ renderAlternative (RenderChild renderChild) alternativeIndex (pattern, expr) =
 
 renderPattern :: P.Pattern -> Renderer n
 renderPattern pattern renderMode (RenderChild renderChild) = case pattern of
+    P.Wildcard -> (OneWord, str "_")
     P.Var var -> (OneWord, str var)
     P.Constructor name patterns -> (OneLine, hBox $ intersperse (str " ") (str name : renderedChildren)) where
         renderedChildren = fmap snd $ zipWith renderChild [0..] renderers
@@ -191,7 +193,7 @@ getChildInExpr :: E.Expr -> E.ChildIndex -> Maybe Selectable
 getChildInExpr expr index = case (expr, index) of
     (E.Fn alternatives, _) -> do
         let altIndex = div index 2
-        (pattern, expr) <- getItemAtIndex (NonEmpty.toList alternatives) altIndex
+        (pattern, expr) <- getItemAtIndex altIndex (NonEmpty.toList alternatives)
         return $ if even index then Pattern pattern else Expr expr
     (E.Call callee _, 0) -> Just $ Expr callee
     (E.Call _ arg, 1) -> Just $ Expr arg
@@ -199,8 +201,9 @@ getChildInExpr expr index = case (expr, index) of
 
 getChildInPattern :: P.Pattern -> E.ChildIndex -> Maybe Selectable
 getChildInPattern pattern index = case pattern of
+    P.Wildcard -> Nothing
     P.Var _ -> Nothing
-    P.Constructor name patterns -> Pattern <$> getItemAtIndex patterns index
+    P.Constructor name patterns -> Pattern <$> getItemAtIndex index patterns
 
 handleEvent :: AppState -> BrickEvent n e -> EventM n (Next AppState)
 handleEvent appState event = case event of
@@ -210,6 +213,7 @@ handleEvent appState event = case event of
     VtyEvent (EvKey KRight []) -> nav nextSiblingPath
     VtyEvent (EvKey KEnter []) -> goToDefinition
     VtyEvent (EvKey KEsc []) -> goBack
+    VtyEvent (EvKey (KChar 'd') []) -> deleteSelected
     VtyEvent (EvKey (KChar 'r') []) -> switchToNextRenderMode
     VtyEvent (EvKey (KChar 'R') []) -> switchToPrevRenderMode
     VtyEvent (EvKey (KChar 'q') []) -> halt appState
@@ -233,10 +237,12 @@ handleEvent appState event = case event of
         goToDefinition = case selectedExpr of
             Just (Expr (E.Ref exprName)) ->
                 if Map.member exprName defs
-                then liftIO (createAppState defs $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
+                then liftIO (createAppState defs renderMode $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
                 else continue appState
             _ -> continue appState
-        goBack = liftIO (createAppState defs $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
+        goBack = liftIO (createAppState defs renderMode $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
+        deleteSelected = modifyDef $ deleteAtPathInExpr selectionPath expr
+        modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode locationHistory) >>= continue
         switchToNextRenderMode = switchRenderMode nextRenderMode
         switchToPrevRenderMode = switchRenderMode prevRenderMode
         switchRenderMode newRenderMode = continue $ AppState defs newRenderMode locationHistory inferResult maybeEvalResult
@@ -244,3 +250,25 @@ handleEvent appState event = case event of
         prevRenderMode = renderModes !! mod (renderModeIndex - 1) (length renderModes)
         renderModeIndex = fromJust $ elemIndex renderMode renderModes
         renderModes = [Parens, NoParens, OneWordPerLine]
+
+deleteAtPathInExpr :: E.Path -> E.Expr -> E.Expr
+deleteAtPathInExpr path expr = case path of
+    [] -> E.Hole
+    edge:restOfPath -> case expr of
+        E.Fn alts -> E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
+            modifyAlt (pattern, expr) =
+                if even edge
+                then (deleteAtPathInPattern restOfPath pattern, expr)
+                else (pattern, deleteAtPathInExpr restOfPath expr)
+        E.Call callee arg ->
+            if edge == 0
+            then E.Call (deleteAtPathInExpr restOfPath callee) arg
+            else E.Call callee (deleteAtPathInExpr restOfPath arg)
+        _ -> error "invalid path"
+
+deleteAtPathInPattern :: E.Path -> P.Pattern -> P.Pattern
+deleteAtPathInPattern path pattern = case path of
+    [] -> P.Wildcard
+    edge:restOfPath -> case pattern of
+        P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (deleteAtPathInPattern restOfPath) children
+        _ -> error "invalid path"

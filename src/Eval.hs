@@ -14,6 +14,7 @@ eval = eval' Map.empty
 
 eval' :: V.Env -> Map.Map E.ExprName E.Expr -> E.Expr -> Maybe V.Value
 eval' env defs expr = case expr of
+    E.Hole -> Nothing
     E.Ref ref -> Map.lookup ref defs >>= eval' env defs
     E.Var var -> join $ Map.lookup var env
     E.Fn alternatives -> Just $ V.Fn $ evalPatternMatching (NonEmpty.toList alternatives) where
@@ -35,6 +36,7 @@ eval' env defs expr = case expr of
 
 match :: Maybe V.Value -> P.Pattern -> Maybe (Map.Map E.ExprName (Maybe V.Value))
 match maybeValue pattern = case pattern of
+    P.Wildcard -> Just $ Map.empty
     P.Var var -> Just $ Map.singleton var maybeValue -- maybeValue is not evaluated (yet) in this case
     P.Constructor name2 patterns -> case maybeValue of
         Just (V.Constructor name1 values) ->

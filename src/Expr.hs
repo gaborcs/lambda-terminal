@@ -11,7 +11,8 @@ type PatternMatching = NonEmpty.NonEmpty Alternative
 type Alternative = (P.Pattern, Expr)
 
 data Expr
-    = Ref ExprName
+    = Hole
+    | Ref ExprName
     | Var VarName
     | Fn PatternMatching
     | Call Expr Expr

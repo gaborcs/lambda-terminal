@@ -32,6 +32,7 @@ inferType constructorTypes defs expr = createInferResult subst maybeErrorTree in
 
 infer :: (E.ConstructorName -> Infer T.Type) -> Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Expr -> Infer InferTree
 infer instantiateConstructorType defs env expr = case expr of
+    E.Hole -> InferTree <$> freshTVar <*> pure [] <*> pure []
     E.Ref ref -> case Map.lookup ref defs of
         Just (Right expr) -> do
             -- to handle recursion we create a type variable that will be used when
@@ -69,6 +70,9 @@ inferAlternative instantiateConstructorType defs env (pattern, expr) = do
 
 inferPattern :: (E.ConstructorName -> Infer T.Type) -> P.Pattern -> Infer (InferTree, TypeEnv)
 inferPattern instantiateConstructorType pattern = case pattern of
+    P.Wildcard -> do
+        tv <- freshTVar
+        return (InferTree tv [] [], Map.empty)
     P.Var var -> do
         tv <- freshTVar
         return (InferTree tv [] [], Map.singleton var tv)

@@ -4,6 +4,7 @@ type VarName = String
 type ConstructorName = String
 
 data Pattern
-    = Var VarName
+    = Wildcard
+    | Var VarName
     | Constructor ConstructorName [Pattern]
     deriving (Eq, Show)
