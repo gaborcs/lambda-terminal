@@ -34,6 +34,7 @@ newtype RenderChild n = RenderChild (E.ChildIndex -> Renderer n -> RenderResult 
 type Renderer n = RenderMode -> RenderChild n -> RenderResult n
 type RenderResult n = (RenderResultType, Widget n)
 data RenderResultType = OneWord | OneLine | MultiLine deriving Eq
+data Selection = ContainsSelection E.Path | WithinSelection | NoSelection deriving Eq
 
 main :: IO ()
 main = do
@@ -80,7 +81,7 @@ draw (AppState defs renderMode locationHistory inferResult evalResult) = [ layer
     gray = rgbColor 128 128 128 -- this shade seems to work well on both light and dark backgrounds
     (exprName, selectionPath) = NonEmpty.head locationHistory
     expr = fromJust $ Map.lookup exprName defs
-    (_, renderedExpr) = renderWithAttrs renderMode (Just selectionPath) maybeTypeError (renderExpr expr)
+    (_, renderedExpr) = renderWithAttrs renderMode (ContainsSelection selectionPath) maybeTypeError (renderExpr expr)
     maybeTypeError = case inferResult of
         TypeError typeError -> Just typeError
         _ -> Nothing
@@ -93,15 +94,16 @@ draw (AppState defs renderMode locationHistory inferResult evalResult) = [ layer
         Error -> ""
         Value v -> fromMaybe "" $ prettyPrintValue v
 
-renderWithAttrs :: RenderMode -> Maybe E.Path -> Maybe TypeError -> Renderer n -> RenderResult n
-renderWithAttrs renderMode maybeSelectionPath maybeTypeError renderer = (renderResultType, highlightIfSelected $ makeRedIfHasError widget) where
+renderWithAttrs :: RenderMode -> Selection -> Maybe TypeError -> Renderer n -> RenderResult n
+renderWithAttrs renderMode selection maybeTypeError renderer = (renderResultType, highlightIfSelected $ makeRedIfNeeded widget) where
     highlightIfSelected = if selected then highlight else id
-    selected = maybeSelectionPath == Just []
-    makeRedIfHasError = if hasError then makeRed else id
+    selected = selection == ContainsSelection []
+    makeRedIfNeeded = if hasError && (selected || withinSelection) then makeRed else id
+    withinSelection = selection == WithinSelection
     hasError = maybe False hasErrorAtRoot maybeTypeError
     makeRed = modifyDefAttr $ flip withForeColor red
     (renderResultType, widget) = renderer renderMode $ RenderChild renderChild
-    renderChild index = renderWithAttrs renderMode (getChildPath maybeSelectionPath index) (getChildTypeError maybeTypeError index)
+    renderChild index = renderWithAttrs renderMode (getChildSelection selection index) (getChildTypeError maybeTypeError index)
 
 renderExpr :: E.Expr -> Renderer n
 renderExpr expr renderMode (RenderChild renderChild) = case expr of
@@ -153,10 +155,12 @@ indent w = str "  " <+> w
 highlight :: Widget n -> Widget n
 highlight = modifyDefAttr $ const defAttr -- the gray foreground color is changed back to the default
 
-getChildPath :: Maybe E.Path -> E.ChildIndex -> Maybe E.Path
-getChildPath maybePath index = case maybePath of
-    Just (i:childPath) -> if i == index then Just childPath else Nothing
-    _ -> Nothing
+getChildSelection :: Selection -> E.ChildIndex -> Selection
+getChildSelection selection index = case selection of
+    ContainsSelection (i:childPath) -> if i == index then ContainsSelection childPath else NoSelection
+    ContainsSelection [] -> WithinSelection
+    WithinSelection -> WithinSelection
+    NoSelection -> NoSelection
 
 getChildTypeError :: Maybe TypeError -> E.ChildIndex -> Maybe TypeError
 getChildTypeError maybeTypeError index = case childResult of
