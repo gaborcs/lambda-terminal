@@ -1,5 +1,6 @@
 module Expr where
 
+import Primitive
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Pattern as P
 
@@ -16,10 +17,7 @@ data Expr
     | Call Expr Expr
     | Constructor ConstructorName
     | Int Int
-    | Equals
-    | Plus
-    | Minus
-    | Times
+    | Primitive Primitive
     deriving (Eq, Show)
 
 -- shortcut for creating functions with a single alternative

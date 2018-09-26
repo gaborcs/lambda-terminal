@@ -2,6 +2,7 @@ module EvalSpec where
 
 import Test.Hspec
 import Eval
+import Primitive
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Expr as E
@@ -26,7 +27,7 @@ defs = Map.fromList
     [ ("id", E.fn "x" $ E.Var "x")
     , ("constOne", E.fn "x" $ E.Int 1)
     , ("const", E.fn "x" . E.fn "y" $ E.Var "x")
-    , ("inc", E.Call E.Plus (E.Int 1))
+    , ("inc", E.Call (E.Primitive Plus) (E.Int 1))
     , ("boolToInt", E.Fn ((P.Constructor "False" [], E.Int 0) NonEmpty.:| [(P.Constructor "True" [], E.Int 1)]))
     , ("fromMaybe", E.fn "default" (E.Fn ((P.Constructor "Just" [P.Var "x"], E.Var "x") NonEmpty.:| [(P.Constructor "Nothing" [], E.Var "default")]))) ]
 

@@ -7,6 +7,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Expr as E
 import qualified Pattern as P
+import qualified Primitive
 import qualified Type as T
 
 data InferResult = Typed TypeTree | TypeError TypeError deriving Show
@@ -58,10 +59,7 @@ infer instantiateConstructorType defs env expr = case expr of
         t <- instantiateConstructorType name
         return $ InferTree t [] []
     E.Int _ -> return $ InferTree T.Int [] []
-    E.Equals -> return $ InferTree (binaryIntOp $ T.Constructor "Bool" []) [] []
-    E.Plus -> return $ InferTree (binaryIntOp T.Int) [] []
-    E.Minus -> return $ InferTree (binaryIntOp T.Int) [] []
-    E.Times -> return $ InferTree (binaryIntOp T.Int) [] []
+    E.Primitive p -> return $ InferTree (Primitive.getType p) [] []
 
 inferAlternative :: (E.ConstructorName -> Infer T.Type) -> Map.Map E.ExprName (Either T.Type E.Expr) -> TypeEnv -> E.Alternative -> Infer (InferTree, InferTree)
 inferAlternative instantiateConstructorType defs env (pattern, expr) = do
@@ -88,9 +86,6 @@ freshTVar = do
     nextTVarId <- get
     put $ nextTVarId + 1
     return $ T.Var nextTVarId
-
-binaryIntOp :: T.Type -> T.Type
-binaryIntOp resultType = T.Fn T.Int $ T.Fn T.Int resultType
 
 instantiate :: T.Type -> Infer T.Type
 instantiate t = do

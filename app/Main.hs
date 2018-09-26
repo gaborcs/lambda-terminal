@@ -20,6 +20,7 @@ import qualified Data.Map as Map
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Expr as E
 import qualified Pattern as P
+import qualified Primitive
 import qualified Type as T
 import qualified Value as V
 
@@ -123,10 +124,7 @@ renderExpr expr renderMode (RenderChild renderChild) = case expr of
         (argResultType, renderedArg) = renderChild 1 (renderExpr arg)
     E.Constructor name -> (OneWord, str name)
     E.Int n -> (OneWord, str $ show n)
-    E.Equals -> (OneWord, str "=")
-    E.Plus -> (OneWord, str "+")
-    E.Minus -> (OneWord, str "-")
-    E.Times -> (OneWord, str "*")
+    E.Primitive p -> (OneWord, str $ Primitive.getDisplayName p)
 
 withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
