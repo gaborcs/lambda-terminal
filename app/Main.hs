@@ -14,17 +14,17 @@ import Infer
 import PrettyPrintType
 import PrettyPrintValue
 import Util
-import Defs
 import ConstructorTypes
 import qualified Data.Map as Map
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Defs
 import qualified Expr as E
 import qualified Pattern as P
 import qualified Primitive
 import qualified Type as T
 import qualified Value as V
 
-data AppState = AppState RenderMode LocationHistory InferResult EvalResult
+data AppState = AppState (Map.Map E.ExprName E.Expr) RenderMode LocationHistory InferResult EvalResult
 data RenderMode = Parens | NoParens | OneWordPerLine deriving Eq
 type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recent
 type Location = (E.ExprName, E.Path)
@@ -39,21 +39,21 @@ main :: IO ()
 main = do
     let initialLocation = ("main", [])
     let initialLocationHistory = initialLocation NonEmpty.:| []
-    initialState <- createAppState initialLocationHistory
+    initialState <- createAppState Defs.defs initialLocationHistory
     defaultMain app initialState
     return ()
 
-createAppState :: LocationHistory -> IO AppState
-createAppState locationHistory = do
+createAppState :: Map.Map E.ExprName E.Expr -> LocationHistory -> IO AppState
+createAppState defs locationHistory = do
     let (exprName, selectionPath) = NonEmpty.head locationHistory
     let expr = fromJust $ Map.lookup exprName defs
     let inferResult = inferType constructorTypes defs expr
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
-    evalResult <- createEvalResult selected
-    return $ AppState NoParens locationHistory inferResult evalResult
+    evalResult <- createEvalResult defs selected
+    return $ AppState defs NoParens locationHistory inferResult evalResult
 
-createEvalResult :: Selectable -> IO EvalResult
-createEvalResult selectable = do
+createEvalResult :: Map.Map E.ExprName E.Expr -> Selectable -> IO EvalResult
+createEvalResult defs selectable = do
     let maybeSelectedExpr = case selectable of
             Expr expr -> Just expr
             _ -> Nothing
@@ -73,7 +73,7 @@ app = App
     , appAttrMap = const $ attrMap defAttr [] }
 
 draw :: AppState -> [Widget n]
-draw (AppState renderMode locationHistory inferResult evalResult) = [ layer ] where
+draw (AppState defs renderMode locationHistory inferResult evalResult) = [ layer ] where
     layer = hBorderWithLabel title <=> padBottom Max coloredExpr <=> str bottomStr
     title = str $ "  " ++ exprName ++ "  "
     coloredExpr = modifyDefAttr (flip withForeColor gray) renderedExpr -- unselected parts of the expression are gray
@@ -215,14 +215,14 @@ handleEvent appState event = case event of
     VtyEvent (EvKey (KChar 'q') []) -> halt appState
     _ -> continue appState
     where
-        AppState renderMode locationHistory inferResult maybeEvalResult = appState
+        AppState defs renderMode locationHistory inferResult maybeEvalResult = appState
         (exprName, selectionPath) NonEmpty.:| past = locationHistory
         expr = fromJust $ Map.lookup exprName defs
         nav path = case getExprAtPath path of
             Just exprAtPath -> liftIO getNewAppState >>= continue where
-                getNewAppState = AppState renderMode newLocationHistory inferResult <$> getNewEvalResult
+                getNewAppState = AppState defs renderMode newLocationHistory inferResult <$> getNewEvalResult
                 newLocationHistory = (exprName, path) NonEmpty.:| past
-                getNewEvalResult = createEvalResult exprAtPath
+                getNewEvalResult = createEvalResult defs exprAtPath
             Nothing -> continue appState
         parentPath = if null selectionPath then [] else init selectionPath
         pathToFirstChildOfSelected = selectionPath ++ [0]
@@ -233,13 +233,13 @@ handleEvent appState event = case event of
         goToDefinition = case selectedExpr of
             Just (Expr (E.Ref exprName)) ->
                 if Map.member exprName defs
-                then liftIO (createAppState $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
+                then liftIO (createAppState defs $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
                 else continue appState
             _ -> continue appState
-        goBack = liftIO (createAppState $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
+        goBack = liftIO (createAppState defs $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
         switchToNextRenderMode = switchRenderMode nextRenderMode
         switchToPrevRenderMode = switchRenderMode prevRenderMode
-        switchRenderMode newRenderMode = continue $ AppState newRenderMode locationHistory inferResult maybeEvalResult
+        switchRenderMode newRenderMode = continue $ AppState defs newRenderMode locationHistory inferResult maybeEvalResult
         nextRenderMode = renderModes !! mod (renderModeIndex + 1) (length renderModes)
         prevRenderMode = renderModes !! mod (renderModeIndex - 1) (length renderModes)
         renderModeIndex = fromJust $ elemIndex renderMode renderModes
