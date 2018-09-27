@@ -8,7 +8,7 @@ import Data.Maybe
 import System.Timeout
 import Brick hiding (Location)
 import Brick.Widgets.Border
-import Graphics.Vty
+import Brick.Widgets.Edit
 import Eval
 import Infer
 import PrettyPrintType
@@ -17,6 +17,8 @@ import Util
 import ConstructorTypes
 import qualified Data.Map as Map
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Brick.Types
+import qualified Graphics.Vty as Vty
 import qualified Defs
 import qualified Expr as E
 import qualified Pattern as P
@@ -24,15 +26,19 @@ import qualified Primitive
 import qualified Type as T
 import qualified Value as V
 
-data AppState = AppState (Map.Map E.ExprName E.Expr) RenderMode LocationHistory InferResult EvalResult
+data AppState = AppState Defs RenderMode LocationHistory EditState InferResult EvalResult
+data AppResourceName = EditorName deriving (Eq, Ord, Show)
+type AppWidget = Widget AppResourceName
+type Defs = Map.Map E.ExprName E.Expr
 data RenderMode = Parens | NoParens | OneWordPerLine deriving Eq
 type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recent
 type Location = (E.ExprName, E.Path)
+type EditState = Maybe (Editor String AppResourceName)
 data EvalResult = Timeout | Error | Value V.Value
 data Selectable = Expr E.Expr | Pattern P.Pattern
-newtype RenderChild n = RenderChild (E.ChildIndex -> Renderer n -> RenderResult n)
-type Renderer n = RenderMode -> RenderChild n -> RenderResult n
-type RenderResult n = (RenderResultType, Widget n)
+newtype RenderChild = RenderChild (E.ChildIndex -> Renderer -> RenderResult)
+type Renderer = RenderMode -> RenderChild -> RenderResult
+type RenderResult = (RenderResultType, AppWidget)
 data RenderResultType = OneWord | OneLine | MultiLine deriving Eq
 data Selection = ContainsSelection E.Path | WithinSelection | NoSelection deriving Eq
 
@@ -44,16 +50,16 @@ main = do
     defaultMain app initialState
     return ()
 
-createAppState :: Map.Map E.ExprName E.Expr -> RenderMode -> LocationHistory -> IO AppState
+createAppState :: Defs -> RenderMode -> LocationHistory -> IO AppState
 createAppState defs renderMode locationHistory = do
     let (exprName, selectionPath) = NonEmpty.head locationHistory
     let expr = fromJust $ Map.lookup exprName defs
     let inferResult = inferType constructorTypes defs expr
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
     evalResult <- createEvalResult defs selected
-    return $ AppState defs renderMode locationHistory inferResult evalResult
+    return $ AppState defs renderMode locationHistory Nothing inferResult evalResult
 
-createEvalResult :: Map.Map E.ExprName E.Expr -> Selectable -> IO EvalResult
+createEvalResult :: Defs -> Selectable -> IO EvalResult
 createEvalResult defs selectable = do
     let maybeSelectedExpr = case selectable of
             Expr expr -> Just expr
@@ -65,23 +71,23 @@ createEvalResult defs selectable = do
         Just Nothing -> Error
         Nothing -> Timeout
 
-app :: App AppState e String
+app :: App AppState e AppResourceName
 app = App
     { appDraw = draw
-    , appChooseCursor = neverShowCursor
+    , appChooseCursor = showFirstCursor
     , appHandleEvent = handleEvent
     , appStartEvent = return
-    , appAttrMap = const $ attrMap defAttr [] }
+    , appAttrMap = const $ attrMap Vty.defAttr [] }
 
-draw :: AppState -> [Widget n]
-draw (AppState defs renderMode locationHistory inferResult evalResult) = [ layer ] where
+draw :: AppState -> [AppWidget]
+draw (AppState defs renderMode locationHistory editState inferResult evalResult) = [ layer ] where
     layer = hBorderWithLabel title <=> padBottom Max coloredExpr <=> str bottomStr
     title = str $ "  " ++ exprName ++ "  "
-    coloredExpr = modifyDefAttr (flip withForeColor gray) renderedExpr -- unselected parts of the expression are gray
-    gray = rgbColor 128 128 128 -- this shade seems to work well on both light and dark backgrounds
+    coloredExpr = modifyDefAttr (flip Vty.withForeColor gray) renderedExpr -- unselected parts of the expression are gray
+    gray = Vty.rgbColor 128 128 128 -- this shade seems to work well on both light and dark backgrounds
     (exprName, selectionPath) = NonEmpty.head locationHistory
     expr = fromJust $ Map.lookup exprName defs
-    (_, renderedExpr) = renderWithAttrs renderMode (ContainsSelection selectionPath) maybeTypeError (renderExpr expr)
+    (_, renderedExpr) = renderWithAttrs renderMode editState (ContainsSelection selectionPath) maybeTypeError (renderExpr expr)
     maybeTypeError = case inferResult of
         TypeError typeError -> Just typeError
         _ -> Nothing
@@ -94,18 +100,23 @@ draw (AppState defs renderMode locationHistory inferResult evalResult) = [ layer
         Error -> ""
         Value v -> fromMaybe "" $ prettyPrintValue v
 
-renderWithAttrs :: RenderMode -> Selection -> Maybe TypeError -> Renderer n -> RenderResult n
-renderWithAttrs renderMode selection maybeTypeError renderer = (renderResultType, highlightIfSelected $ makeRedIfNeeded widget) where
-    highlightIfSelected = if selected then highlight else id
-    selected = selection == ContainsSelection []
-    makeRedIfNeeded = if hasError && (selected || withinSelection) then makeRed else id
-    withinSelection = selection == WithinSelection
-    hasError = maybe False hasErrorAtRoot maybeTypeError
-    makeRed = modifyDefAttr $ flip withForeColor red
-    (renderResultType, widget) = renderer renderMode $ RenderChild renderChild
-    renderChild index = renderWithAttrs renderMode (getChildSelection selection index) (getChildTypeError maybeTypeError index)
+renderWithAttrs :: RenderMode -> EditState -> Selection -> Maybe TypeError -> Renderer -> RenderResult
+renderWithAttrs renderMode editState selection maybeTypeError renderer = case editState of
+    Just editor | selected -> (OneWord, highlight $ hLimit (length editStr + 1) renderedEditor) where
+        editStr = head $ getEditContents editor
+        renderedEditor = renderEditor (str . head) True editor
+    _ -> (renderResultType, highlightIfSelected $ makeRedIfNeeded widget)
+    where
+        selected = selection == ContainsSelection []
+        withinSelection = selection == WithinSelection
+        highlightIfSelected = if selected then highlight else id
+        makeRedIfNeeded = if hasError && (selected || withinSelection) then makeRed else id
+        hasError = maybe False hasErrorAtRoot maybeTypeError
+        makeRed = modifyDefAttr $ flip Vty.withForeColor Vty.red
+        (renderResultType, widget) = renderer renderMode $ RenderChild renderChild
+        renderChild index = renderWithAttrs renderMode editState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
 
-renderExpr :: E.Expr -> Renderer n
+renderExpr :: E.Expr -> Renderer
 renderExpr expr renderMode (RenderChild renderChild) = case expr of
     E.Hole -> (OneWord, str "_")
     E.Ref exprName -> (OneWord, str exprName)
@@ -132,7 +143,7 @@ renderExpr expr renderMode (RenderChild renderChild) = case expr of
 withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
-renderAlternative :: RenderChild n -> Int -> E.Alternative -> RenderResult n
+renderAlternative :: RenderChild -> Int -> E.Alternative -> RenderResult
 renderAlternative (RenderChild renderChild) alternativeIndex (pattern, expr) =
     if exprResultType == MultiLine
     then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
@@ -141,7 +152,7 @@ renderAlternative (RenderChild renderChild) alternativeIndex (pattern, expr) =
         (_, renderedPattern) = renderChild (2 * alternativeIndex) $ renderPattern pattern
         (exprResultType, renderedExpr) = renderChild (2 * alternativeIndex + 1) $ renderExpr expr
 
-renderPattern :: P.Pattern -> Renderer n
+renderPattern :: P.Pattern -> Renderer
 renderPattern pattern renderMode (RenderChild renderChild) = case pattern of
     P.Wildcard -> (OneWord, str "_")
     P.Var var -> (OneWord, str var)
@@ -153,7 +164,7 @@ indent :: Widget n -> Widget n
 indent w = str "  " <+> w
 
 highlight :: Widget n -> Widget n
-highlight = modifyDefAttr $ const defAttr -- the gray foreground color is changed back to the default
+highlight = modifyDefAttr $ const Vty.defAttr -- the gray foreground color is changed back to the default
 
 getChildSelection :: Selection -> E.ChildIndex -> Selection
 getChildSelection selection index = case selection of
@@ -209,70 +220,82 @@ getChildInPattern pattern index = case pattern of
     P.Var _ -> Nothing
     P.Constructor name patterns -> Pattern <$> getItemAtIndex index patterns
 
-handleEvent :: AppState -> BrickEvent n e -> EventM n (Next AppState)
-handleEvent appState event = case event of
-    VtyEvent (EvKey KUp []) -> nav parentPath
-    VtyEvent (EvKey KDown []) -> nav pathToFirstChildOfSelected
-    VtyEvent (EvKey KLeft []) -> nav prevSiblingPath
-    VtyEvent (EvKey KRight []) -> nav nextSiblingPath
-    VtyEvent (EvKey KEnter []) -> goToDefinition
-    VtyEvent (EvKey KEsc []) -> goBack
-    VtyEvent (EvKey (KChar 'd') []) -> deleteSelected
-    VtyEvent (EvKey (KChar 'r') []) -> switchToNextRenderMode
-    VtyEvent (EvKey (KChar 'R') []) -> switchToPrevRenderMode
-    VtyEvent (EvKey (KChar 'q') []) -> halt appState
-    _ -> continue appState
+handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
+handleEvent appState (VtyEvent event) = case editState of
+    Just editor -> case event of
+        Vty.EvKey Vty.KEsc [] -> cancelEdit
+        Vty.EvKey Vty.KEnter [] -> finishEdit $ head $ getEditContents editor
+        _ -> handleEditorEvent event editor >>= setEditor
+    Nothing -> case event of
+        Vty.EvKey Vty.KUp [] -> nav parentPath
+        Vty.EvKey Vty.KDown [] -> nav pathToFirstChildOfSelected
+        Vty.EvKey Vty.KLeft [] -> nav prevSiblingPath
+        Vty.EvKey Vty.KRight [] -> nav nextSiblingPath
+        Vty.EvKey Vty.KEnter [] -> goToDefinition
+        Vty.EvKey Vty.KEsc [] -> goBack
+        Vty.EvKey (Vty.KChar 'e') [] -> edit
+        Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
+        Vty.EvKey (Vty.KChar 'r') [] -> switchToNextRenderMode
+        Vty.EvKey (Vty.KChar 'R') [] -> switchToPrevRenderMode
+        Vty.EvKey (Vty.KChar 'q') [] -> halt appState
+        _ -> continue appState
     where
-        AppState defs renderMode locationHistory inferResult maybeEvalResult = appState
+        AppState defs renderMode locationHistory editState inferResult maybeEvalResult = appState
         (exprName, selectionPath) NonEmpty.:| past = locationHistory
         expr = fromJust $ Map.lookup exprName defs
-        nav path = case getExprAtPath path of
-            Just exprAtPath -> liftIO getNewAppState >>= continue where
-                getNewAppState = AppState defs renderMode newLocationHistory inferResult <$> getNewEvalResult
+        nav path = case getItemAtPath path of
+            Just itemAtPath -> liftIO getNewAppState >>= continue where
+                getNewAppState = AppState defs renderMode newLocationHistory editState inferResult <$> getNewEvalResult
                 newLocationHistory = (exprName, path) NonEmpty.:| past
-                getNewEvalResult = createEvalResult defs exprAtPath
+                getNewEvalResult = createEvalResult defs itemAtPath
             Nothing -> continue appState
         parentPath = if null selectionPath then [] else init selectionPath
         pathToFirstChildOfSelected = selectionPath ++ [0]
         prevSiblingPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath - 1]
         nextSiblingPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath + 1]
-        selectedExpr = getExprAtPath selectionPath
-        getExprAtPath path = getItemAtPathInExpr path expr
-        goToDefinition = case selectedExpr of
-            Just (Expr (E.Ref exprName)) ->
+        selected = fromJust $ getItemAtPath selectionPath
+        getItemAtPath path = getItemAtPathInExpr path expr
+        goToDefinition = case selected of
+            Expr (E.Ref exprName) ->
                 if Map.member exprName defs
                 then liftIO (createAppState defs renderMode $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
                 else continue appState
             _ -> continue appState
         goBack = liftIO (createAppState defs renderMode $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
-        deleteSelected = modifyDef $ deleteAtPathInExpr selectionPath expr
+        edit = setEditor $ editor EditorName (Just 1) ""
+        cancelEdit = setEditState Nothing
+        finishEdit str = modifyDef $ replaceSelected (E.Var str) (P.Var str)
+        replaceSelected = replaceAtPathInExpr selectionPath expr
+        setEditor newEditor = setEditState $ Just newEditor
+        setEditState newEditState = continue $ AppState defs renderMode locationHistory newEditState inferResult maybeEvalResult
+        deleteSelected = modifyDef $ replaceSelected (E.Hole) (P.Wildcard)
         modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode locationHistory) >>= continue
         switchToNextRenderMode = switchRenderMode nextRenderMode
         switchToPrevRenderMode = switchRenderMode prevRenderMode
-        switchRenderMode newRenderMode = continue $ AppState defs newRenderMode locationHistory inferResult maybeEvalResult
+        switchRenderMode newRenderMode = continue $ AppState defs newRenderMode locationHistory editState inferResult maybeEvalResult
         nextRenderMode = renderModes !! mod (renderModeIndex + 1) (length renderModes)
         prevRenderMode = renderModes !! mod (renderModeIndex - 1) (length renderModes)
         renderModeIndex = fromJust $ elemIndex renderMode renderModes
         renderModes = [Parens, NoParens, OneWordPerLine]
 
-deleteAtPathInExpr :: E.Path -> E.Expr -> E.Expr
-deleteAtPathInExpr path expr = case path of
-    [] -> E.Hole
+replaceAtPathInExpr :: E.Path -> E.Expr -> E.Expr -> P.Pattern -> E.Expr
+replaceAtPathInExpr path expr replacementIfExpr replacementIfPattern = case path of
+    [] -> replacementIfExpr
     edge:restOfPath -> case expr of
         E.Fn alts -> E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
             modifyAlt (pattern, expr) =
                 if even edge
-                then (deleteAtPathInPattern restOfPath pattern, expr)
-                else (pattern, deleteAtPathInExpr restOfPath expr)
+                then (replaceAtPathInPattern restOfPath pattern replacementIfPattern, expr)
+                else (pattern, replaceAtPathInExpr restOfPath expr replacementIfExpr replacementIfPattern)
         E.Call callee arg ->
             if edge == 0
-            then E.Call (deleteAtPathInExpr restOfPath callee) arg
-            else E.Call callee (deleteAtPathInExpr restOfPath arg)
+            then E.Call (replaceAtPathInExpr restOfPath callee replacementIfExpr replacementIfPattern) arg
+            else E.Call callee (replaceAtPathInExpr restOfPath arg replacementIfExpr replacementIfPattern)
         _ -> error "invalid path"
 
-deleteAtPathInPattern :: E.Path -> P.Pattern -> P.Pattern
-deleteAtPathInPattern path pattern = case path of
-    [] -> P.Wildcard
+replaceAtPathInPattern :: E.Path -> P.Pattern -> P.Pattern -> P.Pattern
+replaceAtPathInPattern path pattern replacement = case path of
+    [] -> replacement
     edge:restOfPath -> case pattern of
-        P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (deleteAtPathInPattern restOfPath) children
+        P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (replaceAtPathInPattern restOfPath replacement) children
         _ -> error "invalid path"
