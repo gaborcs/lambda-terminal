@@ -235,10 +235,10 @@ handleEvent appState (VtyEvent event) = case editState of
         Vty.EvKey Vty.KDown [] -> navToChild
         Vty.EvKey Vty.KLeft [] -> navBackward
         Vty.EvKey Vty.KRight [] -> navForward
-        Vty.EvKey (Vty.KChar 'p') [] -> navToParent
-        Vty.EvKey (Vty.KChar 'c') [] -> navToChild
-        Vty.EvKey (Vty.KChar 'b') [] -> navBackward
-        Vty.EvKey (Vty.KChar 'f') [] -> navForward
+        Vty.EvKey (Vty.KChar 'i') [] -> navToParent
+        Vty.EvKey (Vty.KChar 'k') [] -> navToChild
+        Vty.EvKey (Vty.KChar 'j') [] -> navBackward
+        Vty.EvKey (Vty.KChar 'l') [] -> navForward
         Vty.EvKey (Vty.KChar 'e') [] -> edit
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
         Vty.EvKey (Vty.KChar 'r') [] -> switchToNextRenderMode
