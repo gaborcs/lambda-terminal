@@ -276,6 +276,7 @@ handleEvent appState (VtyEvent event) = case editState of
         siblingCount = case getItemAtPath (init selectionPath) of
             Just (Expr (E.Fn alts)) -> 2 * length alts
             Just (Expr (E.Call _ _)) -> 2
+            Just (Pattern (P.Constructor _ siblings)) -> length siblings
             _ -> 1
         selected = fromJust $ getItemAtPath selectionPath
         getItemAtPath path = getItemAtPathInExpr path expr
