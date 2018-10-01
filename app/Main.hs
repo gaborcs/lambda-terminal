@@ -249,6 +249,7 @@ handleEvent appState (VtyEvent event) = case editState of
         Vty.EvKey (Vty.KChar 'e') [] -> edit
         Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar ' ') [] -> callSelected
+        Vty.EvKey (Vty.KChar 'a') [] -> applyFnToSelected
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
         Vty.EvKey (Vty.KChar 'r') [] -> switchToNextRenderMode
         Vty.EvKey (Vty.KChar 'R') [] -> switchToPrevRenderMode
@@ -300,6 +301,7 @@ handleEvent appState (VtyEvent event) = case editState of
         setEditState newEditState = continue $ AppState defs renderMode locationHistory newEditState inferResult maybeEvalResult
         wrapSelectedInFn = modifyDef $ wrapSelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
         callSelected = modifyDef $ wrapSelectedExpr $ \expr -> E.Call expr E.Hole
+        applyFnToSelected = modifyDef $ wrapSelectedExpr $ E.Call E.Hole
         wrapSelectedExpr wrapper = wrapExprAtPath selectionPath wrapper expr
         deleteSelected = modifyDef $ replaceSelected (E.Hole) (P.Wildcard)
         modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode locationHistory) >>= continue
