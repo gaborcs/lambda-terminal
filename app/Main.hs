@@ -264,8 +264,13 @@ handleEvent appState (VtyEvent event) = case editState of
         goBack = liftIO (createAppState defs renderMode $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
         edit = setEditor $ editor EditorName (Just 1) ""
         cancelEdit = setEditState Nothing
-        finishEdit str = modifyDef $ replaceSelected (E.Var str) (P.Var str)
-        replaceSelected = replaceAtPathInExpr selectionPath expr
+        finishEdit str = modifyDef $ case Map.lookup str constructorTypes of
+            Just constructorType -> replaceSelected (E.Constructor str) (P.Constructor str wildcards) where
+                wildcards = replicate constructorArity P.Wildcard
+                constructorArity = arity constructorType
+            Nothing -> replaceSelected (E.Var str) (P.Var str)
+        replaceSelected replacementIfExpr replacementIfPattern =
+            replaceAtPathInExpr selectionPath replacementIfExpr replacementIfPattern expr
         setEditor newEditor = setEditState $ Just newEditor
         setEditState newEditState = continue $ AppState defs renderMode locationHistory newEditState inferResult maybeEvalResult
         deleteSelected = modifyDef $ replaceSelected (E.Hole) (P.Wildcard)
@@ -278,23 +283,27 @@ handleEvent appState (VtyEvent event) = case editState of
         renderModeIndex = fromJust $ elemIndex renderMode renderModes
         renderModes = [Parens, NoParens, OneWordPerLine]
 
-replaceAtPathInExpr :: E.Path -> E.Expr -> E.Expr -> P.Pattern -> E.Expr
-replaceAtPathInExpr path expr replacementIfExpr replacementIfPattern = case path of
+arity :: T.Type -> Int
+arity (T.Fn _ resultType) = 1 + arity resultType
+arity _ = 0
+
+replaceAtPathInExpr :: E.Path -> E.Expr -> P.Pattern -> E.Expr -> E.Expr
+replaceAtPathInExpr path replacementIfExpr replacementIfPattern expr = case path of
     [] -> replacementIfExpr
     edge:restOfPath -> case expr of
         E.Fn alts -> E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
             modifyAlt (pattern, expr) =
                 if even edge
-                then (replaceAtPathInPattern restOfPath pattern replacementIfPattern, expr)
-                else (pattern, replaceAtPathInExpr restOfPath expr replacementIfExpr replacementIfPattern)
+                then (replaceAtPathInPattern restOfPath replacementIfPattern pattern, expr)
+                else (pattern, replaceAtPathInExpr restOfPath replacementIfExpr replacementIfPattern expr)
         E.Call callee arg ->
             if edge == 0
-            then E.Call (replaceAtPathInExpr restOfPath callee replacementIfExpr replacementIfPattern) arg
-            else E.Call callee (replaceAtPathInExpr restOfPath arg replacementIfExpr replacementIfPattern)
+            then E.Call (replaceAtPathInExpr restOfPath replacementIfExpr replacementIfPattern callee) arg
+            else E.Call callee (replaceAtPathInExpr restOfPath replacementIfExpr replacementIfPattern arg)
         _ -> error "invalid path"
 
 replaceAtPathInPattern :: E.Path -> P.Pattern -> P.Pattern -> P.Pattern
-replaceAtPathInPattern path pattern replacement = case path of
+replaceAtPathInPattern path replacement pattern = case path of
     [] -> replacement
     edge:restOfPath -> case pattern of
         P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (replaceAtPathInPattern restOfPath replacement) children
