@@ -247,6 +247,7 @@ handleEvent appState (VtyEvent event) = case editState of
         Vty.EvKey (Vty.KChar 'j') [] -> navBackward
         Vty.EvKey (Vty.KChar 'l') [] -> navForward
         Vty.EvKey (Vty.KChar 'e') [] -> edit
+        Vty.EvKey (Vty.KChar 'λ') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar ' ') [] -> callSelected
         Vty.EvKey (Vty.KChar 'a') [] -> applyFnToSelected
