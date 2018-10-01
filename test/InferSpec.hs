@@ -4,8 +4,10 @@ import Test.Hspec
 import Infer
 import Primitive
 import Util
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Expr as E
+import qualified Pattern as P
 import qualified Type as T
 
 spec :: Spec
@@ -32,6 +34,7 @@ spec = do
         E.Constructor "Nothing" `hasType` T.Constructor "Maybe" [T.Var 0]
         E.Constructor "Just" `hasType` T.Fn (T.Var 0) (T.Constructor "Maybe" [T.Var 0])
         E.Call (E.Constructor "Just") (E.Int 1) `hasType` T.Constructor "Maybe" [T.Int]
+        E.Ref "intToBool" `hasType` T.Fn T.Int (T.Constructor "Bool" [])
     it "indicates where type errors happen" $ do
         E.Call (E.Int 1) (E.Int 1) `failsAtPath` []
         E.fn "x" (E.Call (E.Int 1) (E.Int 1)) `failsAtPath` [1]
@@ -39,7 +42,9 @@ spec = do
 
 constructorTypes :: Map.Map E.ConstructorName T.Type
 constructorTypes = Map.fromList
-    [ ("Nothing", T.Constructor "Maybe" [T.Var 0])
+    [ ("False", T.Constructor "Bool" [])
+    , ("True", T.Constructor "Bool" [])
+    , ("Nothing", T.Constructor "Maybe" [T.Var 0])
     , ("Just", T.Fn (T.Var 0) (T.Constructor "Maybe" [T.Var 0])) ]
 
 defs :: Map.Map E.ExprName E.Expr
@@ -49,7 +54,8 @@ defs = Map.fromList
     , ("const", E.fn "x" . E.fn "y" $ E.Var "x")
     , ("inc", E.Call (E.Primitive Plus) $ E.Int 1)
     , ("diverge", E.Ref "diverge")
-    , ("divergeFn", E.fn "n" $ E.Call (E.Ref "divergeFn") (E.Int 1)) ]
+    , ("divergeFn", E.fn "n" $ E.Call (E.Ref "divergeFn") (E.Int 1))
+    , ("intToBool", E.Fn ((P.Int 0, E.Constructor "False") NonEmpty.:| [(P.Wildcard, E.Constructor "True")])) ]
 
 hasType :: E.Expr -> T.Type -> Expectation
 hasType expr expectedType = case inferType constructorTypes defs expr of

@@ -6,6 +6,7 @@ import Control.Monad.IO.Class
 import Data.List
 import Data.Maybe
 import System.Timeout
+import Text.Read
 import Brick hiding (Location)
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
@@ -160,6 +161,7 @@ renderPattern pattern renderMode (RenderChild renderChild) = case pattern of
         renderedChildren = addParensIfNeeded <$> zipWith renderChild [0..] renderers
         addParensIfNeeded (resultType, renderedChild) = withParensIf (resultType /= OneWord) renderedChild
         renderers = renderPattern <$> patterns
+    P.Int n -> (OneWord, str $ show n)
 
 indent :: Widget n -> Widget n
 indent w = str "  " <+> w
@@ -217,9 +219,8 @@ getChildInExpr expr index = case (expr, index) of
 
 getChildInPattern :: P.Pattern -> E.ChildIndex -> Maybe Selectable
 getChildInPattern pattern index = case pattern of
-    P.Wildcard -> Nothing
-    P.Var _ -> Nothing
     P.Constructor name patterns -> Pattern <$> getItemAtIndex index patterns
+    _ -> Nothing
 
 handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
 handleEvent appState (VtyEvent event) = case editState of
@@ -269,7 +270,9 @@ handleEvent appState (VtyEvent event) = case editState of
             Just constructorType -> replaceSelected (E.Constructor str) (P.Constructor str wildcards) where
                 wildcards = replicate constructorArity P.Wildcard
                 constructorArity = arity constructorType
-            Nothing -> replaceSelected (E.Var str) (P.Var str)
+            Nothing -> case readMaybe str of
+                Just int -> replaceSelected (E.Int int) (P.Int int)
+                Nothing -> replaceSelected (E.Var str) (P.Var str)
         replaceSelected replacementIfExpr replacementIfPattern =
             replaceAtPathInExpr selectionPath replacementIfExpr replacementIfPattern expr
         setEditor newEditor = setEditState $ Just newEditor

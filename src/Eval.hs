@@ -36,9 +36,12 @@ eval' env defs expr = case expr of
 
 match :: Maybe V.Value -> P.Pattern -> Maybe (Map.Map E.ExprName (Maybe V.Value))
 match maybeValue pattern = case pattern of
-    P.Wildcard -> Just $ Map.empty
+    P.Wildcard -> Just Map.empty
     P.Var var -> Just $ Map.singleton var maybeValue -- maybeValue is not evaluated (yet) in this case
     P.Constructor name2 patterns -> case maybeValue of
         Just (V.Constructor name1 values) ->
             if name1 == name2 then mconcat <$> sequence (zipWith match values patterns) else Nothing
+        _ -> Nothing
+    P.Int n -> case maybeValue of
+        Just (V.Int m) | n == m -> Just Map.empty
         _ -> Nothing

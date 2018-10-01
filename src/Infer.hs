@@ -107,6 +107,7 @@ inferPattern instantiateConstructorType pattern = case pattern of
                 constructorType <- getConstructorType
                 return (TypedIntermediate $ TypedIntermediateTree tv [(constructorType, foldr T.Fn tv childTypes)] typedChildTrees, typeEnv)
             _ -> return (UntypedIntermediate childTrees, typeEnv)
+    P.Int _ -> return (TypedIntermediate $ TypedIntermediateTree T.Int [] [], Map.empty)
 
 freshTVar :: Infer T.Type
 freshTVar = do
