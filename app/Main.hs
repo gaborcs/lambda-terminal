@@ -301,10 +301,14 @@ handleEvent appState (VtyEvent event) = case editState of
             replaceAtPathInExpr selectionPath replacementIfExpr replacementIfPattern expr
         setEditor newEditor = setEditState $ Just newEditor
         setEditState newEditState = continue $ AppState defs renderMode locationHistory newEditState inferResult maybeEvalResult
-        wrapSelectedInFn = modifyDef $ wrapSelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
-        callSelected = modifyDef $ wrapSelectedExpr $ \expr -> E.Call expr E.Hole
-        applyFnToSelected = modifyDef $ wrapSelectedExpr $ E.Call E.Hole
-        wrapSelectedExpr wrapper = wrapExprAtPath selectionPath wrapper expr
+        wrapSelectedInFn = wrapSelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
+        callSelected = wrapSelectedExpr $ \expr -> E.Call expr E.Hole
+        applyFnToSelected = wrapSelectedExpr $ E.Call E.Hole
+        wrapSelectedExpr wrapper = liftIO (createAppState newDefs renderMode newLocationHistory) >>= continue where
+            newDefs = Map.insert exprName newExpr defs
+            newExpr = wrapExprAtPath pathToExprContainingSelection wrapper expr
+            newLocationHistory = (exprName, pathToExprContainingSelection) NonEmpty.:| past
+            pathToExprContainingSelection = dropPatternPartOfPath expr selectionPath
         deleteSelected = modifyDef $ replaceSelected (E.Hole) (P.Wildcard)
         modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode locationHistory) >>= continue
         switchToNextRenderMode = switchRenderMode nextRenderMode
@@ -345,8 +349,17 @@ wrapExprAtPath :: E.Path -> (E.Expr -> E.Expr) -> E.Expr -> E.Expr
 wrapExprAtPath path wrapper expr = case path of
     [] -> wrapper expr
     edge:restOfPath -> case expr of
-        E.Fn alts -> if even edge then wrapper expr else E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
+        E.Fn alts | odd edge -> E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
             modifyAlt (pattern, expr) = (pattern, wrapExprAtPath restOfPath wrapper expr)
         E.Call callee arg | edge == 0 -> E.Call (wrapExprAtPath restOfPath wrapper callee) arg
         E.Call callee arg | edge == 1 -> E.Call callee (wrapExprAtPath restOfPath wrapper arg)
+        _ -> error "invalid path"
+
+dropPatternPartOfPath :: E.Expr -> E.Path -> E.Path
+dropPatternPartOfPath expr path = case path of
+    [] -> []
+    edge:restOfPath -> case expr of
+        E.Fn alts -> if even edge then [] else edge : dropPatternPartOfPath (snd $ alts NonEmpty.!! div edge 2) restOfPath
+        E.Call callee arg | edge == 0 -> 0 : dropPatternPartOfPath callee restOfPath
+        E.Call callee arg | edge == 1 -> 1 : dropPatternPartOfPath arg restOfPath
         _ -> error "invalid path"
