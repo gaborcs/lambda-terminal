@@ -8,9 +8,8 @@ import qualified Pattern as P
 
 defs :: Map.Map ExprName Expr
 defs = Map.fromList
-    [ ("case", fn "value" $ fn "matcher" $ Call (Var "matcher") (Var "value"))
-    , ("if", fn "condition" $ fn "thenExpr" $ fn "elseExpr" $
-        Call (Call (Ref "case") (Var "condition")) (Fn $ (P.Constructor "True" [], Var "thenExpr") :| [(P.Constructor "False" [], Var "elseExpr")]))
+    [ ("if", fn "condition" $ fn "thenExpr" $ fn "elseExpr" $
+        Call (Fn $ (P.Constructor "True" [], Var "thenExpr") :| [(P.Constructor "False" [], Var "elseExpr")]) (Var "condition"))
     , ("factorial", fn "n" $
         Call (Call (Call (Ref "if") (Call (Call (Primitive Equals) (Var "n")) (Int 0)))
              (Int 1))
