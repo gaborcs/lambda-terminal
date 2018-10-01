@@ -20,6 +20,6 @@ defs = Map.fromList
     , ("InfList.take", fn "n" $ Fn $ pure (P.Constructor "InfList.Cons" [P.Var "x", P.Var "xs"],
         Call (Call (Call (Ref "if") (Call (Call (Primitive Equals) (Var "n")) (Int 0))) (Constructor "[]"))
         (Call (Call (Constructor "Cons") (Var "x")) (Call (Call (Ref "InfList.take") (Call (Call (Primitive Minus) (Var "n")) (Int 1))) (Var "xs")))))
-    , ("const", fn "x" . fn "y" $ Var "x")
+    , ("const", fn "x" . Fn $ pure (P.Wildcard, Var "x"))
     , ("increment", Call (Primitive Plus) $ Int 1) , ("main", Call (Call (Ref "const") (Call (Ref "factorial") (Call (Ref "increment") (Int 4)))) (Call (Call (Ref "InfList.take") (Int 7)) (Ref "fibonacciSeq")))
     ]
