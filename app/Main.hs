@@ -248,6 +248,7 @@ handleEvent appState (VtyEvent event) = case editState of
         Vty.EvKey (Vty.KChar 'l') [] -> navForward
         Vty.EvKey (Vty.KChar 'e') [] -> edit
         Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
+        Vty.EvKey (Vty.KChar ' ') [] -> callSelected
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
         Vty.EvKey (Vty.KChar 'r') [] -> switchToNextRenderMode
         Vty.EvKey (Vty.KChar 'R') [] -> switchToPrevRenderMode
@@ -297,7 +298,9 @@ handleEvent appState (VtyEvent event) = case editState of
             replaceAtPathInExpr selectionPath replacementIfExpr replacementIfPattern expr
         setEditor newEditor = setEditState $ Just newEditor
         setEditState newEditState = continue $ AppState defs renderMode locationHistory newEditState inferResult maybeEvalResult
-        wrapSelectedInFn = modifyDef $ wrapInFn selectionPath expr
+        wrapSelectedInFn = modifyDef $ wrapSelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
+        callSelected = modifyDef $ wrapSelectedExpr $ \expr -> E.Call expr E.Hole
+        wrapSelectedExpr wrapper = wrapExprAtPath selectionPath wrapper expr
         deleteSelected = modifyDef $ replaceSelected (E.Hole) (P.Wildcard)
         modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode locationHistory) >>= continue
         switchToNextRenderMode = switchRenderMode nextRenderMode
@@ -334,14 +337,12 @@ replaceAtPathInPattern path replacement pattern = case path of
         P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (replaceAtPathInPattern restOfPath replacement) children
         _ -> error "invalid path"
 
-wrapInFn :: E.Path -> E.Expr -> E.Expr
-wrapInFn path expr = case path of
-    [] -> wrappedExpr
+wrapExprAtPath :: E.Path -> (E.Expr -> E.Expr) -> E.Expr -> E.Expr
+wrapExprAtPath path wrapper expr = case path of
+    [] -> wrapper expr
     edge:restOfPath -> case expr of
-        E.Fn alts -> if even edge then wrappedExpr else E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
-            modifyAlt (pattern, expr) = (pattern, wrapInFn restOfPath expr)
-        E.Call callee arg | edge == 0 -> E.Call (wrapInFn restOfPath callee) arg
-        E.Call callee arg | edge == 1 -> E.Call callee (wrapInFn restOfPath arg)
+        E.Fn alts -> if even edge then wrapper expr else E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
+            modifyAlt (pattern, expr) = (pattern, wrapExprAtPath restOfPath wrapper expr)
+        E.Call callee arg | edge == 0 -> E.Call (wrapExprAtPath restOfPath wrapper callee) arg
+        E.Call callee arg | edge == 1 -> E.Call callee (wrapExprAtPath restOfPath wrapper arg)
         _ -> error "invalid path"
-    where
-        wrappedExpr = E.Fn (pure (P.Wildcard, expr))
