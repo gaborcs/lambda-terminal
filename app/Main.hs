@@ -128,15 +128,22 @@ renderExpr expr renderMode (RenderChild renderChild) = case expr of
         (firstAltResultType, firstAltWidget) NonEmpty.:| restOfAltResults =
             NonEmpty.zipWith (renderAlternative $ RenderChild renderChild) (NonEmpty.fromList [0..]) alternatives
         restOfAltWidgets = map snd restOfAltResults
-    E.Call callee arg -> if shouldBeMultiLine then multiLineResult else oneLineResult where
-        shouldBeMultiLine = case renderMode of
-            Parens -> calleeResultType == MultiLine || argResultType == MultiLine
-            NoParens -> calleeResultType == MultiLine || argResultType /= OneWord
-            OneWordPerLine -> True
-        multiLineResult = (MultiLine, renderedCallee <=> indent renderedArg)
-        oneLineResult = (OneLine, renderedCallee <+> str " " <+> withParensIf (argResultType /= OneWord) renderedArg)
-        (calleeResultType, renderedCallee) = renderChild 0 (renderExpr callee)
-        (argResultType, renderedArg) = renderChild 1 (renderExpr arg)
+    E.Call callee arg -> case callee of
+        E.Fn _ -> (MultiLine, renderedMatch) where
+            renderedMatch =
+                if argResultType == MultiLine
+                then str "match" <=> indent renderedArg <=> indent renderedCallee
+                else str "match " <+> renderedArg <=> indent renderedCallee
+        _ -> if shouldBeMultiLine then multiLineResult else oneLineResult where
+            shouldBeMultiLine = case renderMode of
+                Parens -> calleeResultType == MultiLine || argResultType == MultiLine
+                NoParens -> calleeResultType == MultiLine || argResultType /= OneWord
+                OneWordPerLine -> True
+            multiLineResult = (MultiLine, renderedCallee <=> indent renderedArg)
+            oneLineResult = (OneLine, renderedCallee <+> str " " <+> withParensIf (argResultType /= OneWord) renderedArg)
+        where
+            (calleeResultType, renderedCallee) = renderChild 0 (renderExpr callee)
+            (argResultType, renderedArg) = renderChild 1 (renderExpr arg)
     E.Constructor name -> (OneWord, str name)
     E.Int n -> (OneWord, str $ show n)
     E.Primitive p -> (OneWord, str $ Primitive.getDisplayName p)
@@ -262,8 +269,12 @@ handleEvent appState (VtyEvent event) = case editState of
             Nothing -> continue appState
         parentPath = if null selectionPath then [] else init selectionPath
         pathToFirstChildOfSelected = selectionPath ++ [0]
-        prevSiblingPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath - 1]
-        nextSiblingPath = if null selectionPath then [] else init selectionPath ++ [last selectionPath + 1]
+        prevSiblingPath = if null selectionPath then [] else init selectionPath ++ [mod (last selectionPath - 1) siblingCount]
+        nextSiblingPath = if null selectionPath then [] else init selectionPath ++ [mod (last selectionPath + 1) siblingCount]
+        siblingCount = case getItemAtPath (init selectionPath) of
+            Just (Expr (E.Fn alts)) -> 2 * length alts
+            Just (Expr (E.Call _ _)) -> 2
+            _ -> 1
         selected = fromJust $ getItemAtPath selectionPath
         getItemAtPath path = getItemAtPathInExpr path expr
         goToDefinition = case selected of
