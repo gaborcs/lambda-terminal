@@ -229,12 +229,16 @@ handleEvent appState (VtyEvent event) = case editState of
         Vty.EvKey Vty.KEnter [] -> finishEdit $ head $ getEditContents editor
         _ -> handleEditorEvent event editor >>= setEditor
     Nothing -> case event of
-        Vty.EvKey Vty.KUp [] -> nav parentPath
-        Vty.EvKey Vty.KDown [] -> nav pathToFirstChildOfSelected
-        Vty.EvKey Vty.KLeft [] -> nav prevSiblingPath
-        Vty.EvKey Vty.KRight [] -> nav nextSiblingPath
         Vty.EvKey Vty.KEnter [] -> goToDefinition
         Vty.EvKey Vty.KEsc [] -> goBack
+        Vty.EvKey Vty.KUp [] -> navToParent
+        Vty.EvKey Vty.KDown [] -> navToChild
+        Vty.EvKey Vty.KLeft [] -> navBackward
+        Vty.EvKey Vty.KRight [] -> navForward
+        Vty.EvKey (Vty.KChar 'p') [] -> navToParent
+        Vty.EvKey (Vty.KChar 'c') [] -> navToChild
+        Vty.EvKey (Vty.KChar 'b') [] -> navBackward
+        Vty.EvKey (Vty.KChar 'f') [] -> navForward
         Vty.EvKey (Vty.KChar 'e') [] -> edit
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
         Vty.EvKey (Vty.KChar 'r') [] -> switchToNextRenderMode
@@ -245,6 +249,10 @@ handleEvent appState (VtyEvent event) = case editState of
         AppState defs renderMode locationHistory editState inferResult maybeEvalResult = appState
         (exprName, selectionPath) NonEmpty.:| past = locationHistory
         expr = fromJust $ Map.lookup exprName defs
+        navToParent = nav parentPath
+        navToChild = nav pathToFirstChildOfSelected
+        navBackward = nav prevSiblingPath
+        navForward = nav nextSiblingPath
         nav path = case getItemAtPath path of
             Just itemAtPath -> liftIO getNewAppState >>= continue where
                 getNewAppState = AppState defs renderMode newLocationHistory editState inferResult <$> getNewEvalResult
