@@ -26,6 +26,7 @@ dependencies:
 - deepseq
 - hspec
 - mtl
+- vector
 - vty
 
 library:
