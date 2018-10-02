@@ -247,10 +247,11 @@ handleEvent appState (VtyEvent event) = case editState of
         Vty.EvKey (Vty.KChar 'j') [] -> navBackward
         Vty.EvKey (Vty.KChar 'l') [] -> navForward
         Vty.EvKey (Vty.KChar 'e') [] -> edit
-        Vty.EvKey (Vty.KChar 'λ') [] -> wrapSelectedInFn
-        Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar ' ') [] -> callSelected
         Vty.EvKey (Vty.KChar 'a') [] -> applyFnToSelected
+        Vty.EvKey (Vty.KChar 'λ') [] -> wrapSelectedInFn
+        Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
+        Vty.EvKey (Vty.KChar '|') [] -> addAlternativeToSelected
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
         Vty.EvKey (Vty.KChar 'r') [] -> switchToNextRenderMode
         Vty.EvKey (Vty.KChar 'R') [] -> switchToPrevRenderMode
@@ -301,14 +302,15 @@ handleEvent appState (VtyEvent event) = case editState of
             replaceAtPathInExpr selectionPath replacementIfExpr replacementIfPattern expr
         setEditor newEditor = setEditState $ Just newEditor
         setEditState newEditState = continue $ AppState defs renderMode locationHistory newEditState inferResult maybeEvalResult
-        wrapSelectedInFn = wrapSelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
         callSelected = wrapSelectedExpr $ \expr -> E.Call expr E.Hole
         applyFnToSelected = wrapSelectedExpr $ E.Call E.Hole
+        wrapSelectedInFn = wrapSelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
         wrapSelectedExpr wrapper = liftIO (createAppState newDefs renderMode newLocationHistory) >>= continue where
             newDefs = Map.insert exprName newExpr defs
             newExpr = wrapExprAtPath pathToExprContainingSelection wrapper expr
             newLocationHistory = (exprName, pathToExprContainingSelection) NonEmpty.:| past
             pathToExprContainingSelection = dropPatternPartOfPath expr selectionPath
+        addAlternativeToSelected = maybe (continue appState) modifyDef (addAlternativeAtPath selectionPath expr)
         deleteSelected = modifyDef $ replaceSelected (E.Hole) (P.Wildcard)
         modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode locationHistory) >>= continue
         switchToNextRenderMode = switchRenderMode nextRenderMode
@@ -363,3 +365,15 @@ dropPatternPartOfPath expr path = case path of
         E.Call callee arg | edge == 0 -> 0 : dropPatternPartOfPath callee restOfPath
         E.Call callee arg | edge == 1 -> 1 : dropPatternPartOfPath arg restOfPath
         _ -> error "invalid path"
+
+addAlternativeAtPath :: E.Path -> E.Expr -> Maybe E.Expr
+addAlternativeAtPath selectionPath expr = case (expr, selectionPath) of
+    (E.Fn alts, edge:restOfPath) | odd edge -> case addAlternativeAtPath restOfPath (snd $ alts NonEmpty.!! altIndex) of
+        Just expr -> Just $ E.Fn $ modifyItemAtIndexInNonEmpty altIndex modifyAlt alts where
+            modifyAlt (pattern, _) = (pattern, expr)
+        _ -> Just $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)
+        where altIndex = div edge 2
+    (E.Fn alts, _) -> Just $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)
+    (E.Call callee arg, 0:restOfPath) -> E.Call <$> addAlternativeAtPath restOfPath callee <*> pure arg
+    (E.Call callee arg, 1:restOfPath) -> E.Call callee <$> addAlternativeAtPath restOfPath arg
+    _ -> Nothing
