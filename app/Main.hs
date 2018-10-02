@@ -3,6 +3,7 @@ module Main where
 import Control.DeepSeq
 import Control.Exception.Base (evaluate)
 import Control.Monad.IO.Class
+import Data.Char
 import Data.List
 import Data.Maybe
 import System.Timeout
@@ -249,18 +250,22 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
     Just (EditState editor maybeAutocompleteState) -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit
         Vty.EvKey Vty.KEnter [] -> maybe (continue appState) submitAutocompleteSelection maybeAutocompleteState
-        Vty.EvKey (Vty.KChar ' ') [] -> submitEditorContent editor
+        Vty.EvKey (Vty.KChar ' ') [] -> submitEditorContent editorContent
         _ -> do
             newEditor <- case event of
                 -- ignore up/down as they are used to control the autocomplete
                 Vty.EvKey Vty.KUp [] -> pure editor
                 Vty.EvKey Vty.KDown [] -> pure editor
                 _ -> handleEditorEvent event editor
+            let newEditorContent = head $ getEditContents newEditor
+            let editorContentChanged = newEditorContent /= editorContent
+            let isSimilarToEditorContent str = isInfixOf (map toLower newEditorContent) (map toLower str)
             newAutocompleteList <- case maybeAutocompleteState of
-                Just (AutocompleteState autocompleteList _) -> ListWidget.handleListEvent event autocompleteList
-                Nothing -> pure $ ListWidget.list AutocompleteName (Vec.fromList $ Map.keys defs) 1
+                Just (AutocompleteState autocompleteList _) | not editorContentChanged -> ListWidget.handleListEvent event autocompleteList
+                _ -> pure $ ListWidget.list AutocompleteName (Vec.fromList $ filter isSimilarToEditorContent $ Map.keys defs) 1
             maybeEditorExtent <- lookupExtent EditorName
             setEditState $ Just $ EditState newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
+        where editorContent = head $ getEditContents editor
     Nothing -> case event of
         Vty.EvKey Vty.KEnter [] -> goToDefinition
         Vty.EvKey Vty.KEsc [] -> goBack
@@ -317,14 +322,13 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         goBack = liftIO (createAppState defs renderMode $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
         edit = setEditState $ Just $ EditState (editor EditorName (Just 1) "") Nothing
         cancelEdit = setEditState Nothing
-        submitEditorContent editor = modifyDef $ case Map.lookup str constructorTypes of
-            Just constructorType -> replaceSelected (E.Constructor str) (P.Constructor str wildcards) where
+        submitEditorContent editorContent = modifyDef $ case Map.lookup editorContent constructorTypes of
+            Just constructorType -> replaceSelected (E.Constructor editorContent) (P.Constructor editorContent wildcards) where
                 wildcards = replicate constructorArity P.Wildcard
                 constructorArity = arity constructorType
-            Nothing -> case readMaybe str of
+            Nothing -> case readMaybe editorContent of
                 Just int -> replaceSelected (E.Int int) (P.Int int)
-                Nothing -> replaceSelected (E.Var str) (P.Var str)
-            where str = head $ getEditContents editor
+                Nothing -> replaceSelected (E.Var editorContent) (P.Var editorContent)
         submitAutocompleteSelection (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
             Just (_, ref) -> modifyDef $ modifySelected (const $ E.Ref ref) id
             _ -> continue appState
