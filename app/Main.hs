@@ -335,12 +335,12 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern expr
         setEditState newEditState = continue $ AppState defs renderMode locationHistory newEditState inferResult maybeEvalResult
-        callSelected = wrapSelectedExpr $ \expr -> E.Call expr E.Hole
-        applyFnToSelected = wrapSelectedExpr $ E.Call E.Hole
-        wrapSelectedInFn = wrapSelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
-        wrapSelectedExpr wrapper = liftIO (createAppState newDefs renderMode newLocationHistory) >>= continue where
+        callSelected = modifySelectedExpr $ \expr -> E.Call expr E.Hole
+        applyFnToSelected = modifySelectedExpr $ E.Call E.Hole
+        wrapSelectedInFn = modifySelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
+        modifySelectedExpr modify = liftIO (createAppState newDefs renderMode newLocationHistory) >>= continue where
             newDefs = Map.insert exprName newExpr defs
-            newExpr = wrapExprAtPath pathToExprContainingSelection wrapper expr
+            newExpr = modifyAtPathInExpr pathToExprContainingSelection modify id expr
             newLocationHistory = (exprName, pathToExprContainingSelection) NonEmpty.:| past
             pathToExprContainingSelection = dropPatternPartOfPath expr selectionPath
         addAlternativeToSelected = maybe (continue appState) modifyDef (addAlternativeAtPath selectionPath expr)
@@ -378,16 +378,6 @@ modifyAtPathInPattern path modify pattern = case path of
     [] -> modify pattern
     edge:restOfPath -> case pattern of
         P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (modifyAtPathInPattern restOfPath modify) children
-        _ -> error "invalid path"
-
-wrapExprAtPath :: E.Path -> (E.Expr -> E.Expr) -> E.Expr -> E.Expr
-wrapExprAtPath path wrapper expr = case path of
-    [] -> wrapper expr
-    edge:restOfPath -> case expr of
-        E.Fn alts | odd edge -> E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
-            modifyAlt (pattern, expr) = (pattern, wrapExprAtPath restOfPath wrapper expr)
-        E.Call callee arg | edge == 0 -> E.Call (wrapExprAtPath restOfPath wrapper callee) arg
-        E.Call callee arg | edge == 1 -> E.Call callee (wrapExprAtPath restOfPath wrapper arg)
         _ -> error "invalid path"
 
 dropPatternPartOfPath :: E.Expr -> E.Path -> E.Path
