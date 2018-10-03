@@ -6,6 +6,7 @@ import Control.Monad.IO.Class
 import Data.Char
 import Data.List
 import Data.Maybe
+import Data.Text.Zipper
 import System.Timeout
 import Text.Read
 import Brick hiding (Location)
@@ -320,7 +321,18 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
                 else continue appState
             _ -> continue appState
         goBack = liftIO (createAppState defs renderMode $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
-        edit = setEditState $ Just $ EditState (editor EditorName (Just 1) "") Nothing
+        edit = setEditState $ Just $ EditState initialEditor Nothing
+        initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialEditorContent
+        initialEditorContent = case selected of
+            Expr (E.Ref name) -> name
+            Expr (E.Var name) -> name
+            Expr (E.Constructor name) -> name
+            Expr (E.Int n) -> show n
+            Expr (E.Primitive p) -> Primitive.getDisplayName p
+            Pattern (P.Var name) -> name
+            Pattern (P.Constructor name _) -> name
+            Pattern (P.Int n) -> show n
+            _ -> ""
         cancelEdit = setEditState Nothing
         submitEditorContent editorContent = modifyDef $ case Map.lookup editorContent constructorTypes of
             Just constructorType -> replaceSelected (E.Constructor editorContent) (P.Constructor editorContent wildcards) where
