@@ -90,11 +90,13 @@ app = App
 draw :: AppState -> [AppWidget]
 draw (AppState defs renderMode locationHistory maybeEditState inferResult evalResult) = ui where
     ui = case maybeEditState of
-        Just (EditState _ (Just (AutocompleteState autocompleteList editorExtent))) -> [ translateBy autocompleteOffset autocomplete, layout ] where
+        Just (EditState _ (Just (AutocompleteState autocompleteList editorExtent))) | autocompleteListLength > 0 ->
+            [ translateBy autocompleteOffset autocomplete, layout ] where
             autocompleteOffset = Brick.Types.Location (editorX, editorY + 1)
             Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
-            autocomplete = hLimit 20 $ vLimit 5 $ modifyDefAttr (flip Vty.withBackColor gray) $
+            autocomplete = hLimit 20 $ vLimit (min autocompleteListLength 5) $ modifyDefAttr (flip Vty.withBackColor gray) $
                 ListWidget.renderList renderAutocompleteItem True autocompleteList
+            autocompleteListLength = length $ ListWidget.listElements autocompleteList
         _ -> [ layout ]
     layout = hBorderWithLabel title <=> padBottom Max coloredExpr <=> str bottomStr
     title = str $ "  " ++ exprName ++ "  "
