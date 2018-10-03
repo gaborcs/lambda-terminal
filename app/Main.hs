@@ -40,7 +40,7 @@ type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recen
 type Location = (E.ExprName, E.Path)
 data EditState = EditState (Editor String AppResourceName) (Maybe AutocompleteState)
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
-type AutocompleteList = ListWidget.List AppResourceName String
+type AutocompleteList = ListWidget.List AppResourceName Selectable
 type EditorExtent = Extent AppResourceName
 data EvalResult = Timeout | Error | Value V.Value
 data Selectable = Expr E.Expr | Pattern P.Pattern
@@ -95,9 +95,6 @@ draw (AppState defs renderMode locationHistory maybeEditState inferResult evalRe
             Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
             autocomplete = hLimit 20 $ vLimit 5 $ modifyDefAttr (flip Vty.withBackColor gray) $
                 ListWidget.renderList renderAutocompleteItem True autocompleteList
-            renderAutocompleteItem isSelected = modifyDefAttr (flip Vty.withForeColor $ if isSelected then white else black) . str
-            white = Vty.rgbColor 255 255 255
-            black = Vty.rgbColor 0 0 0
         _ -> [ layout ]
     layout = hBorderWithLabel title <=> padBottom Max coloredExpr <=> str bottomStr
     title = str $ "  " ++ exprName ++ "  "
@@ -117,6 +114,12 @@ draw (AppState defs renderMode locationHistory maybeEditState inferResult evalRe
         Timeout -> "<eval timeout>"
         Error -> ""
         Value v -> fromMaybe "" $ prettyPrintValue v
+
+renderAutocompleteItem :: Bool -> Selectable -> Widget n
+renderAutocompleteItem isSelected = color . str . printAutocompleteItem where
+    color = modifyDefAttr (flip Vty.withForeColor $ if isSelected then white else black)
+    white = Vty.rgbColor 255 255 255
+    black = Vty.rgbColor 0 0 0
 
 renderWithAttrs :: RenderMode -> Maybe EditState -> Selection -> Maybe TypeError -> Renderer -> RenderResult
 renderWithAttrs renderMode maybeEditState selection maybeTypeError renderer = case maybeEditState of
@@ -261,9 +264,17 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
             let newEditorContent = head $ getEditContents newEditor
             let editorContentChanged = newEditorContent /= editorContent
             let isSimilarToEditorContent str = isInfixOf (map toLower newEditorContent) (map toLower str)
+            let isMatch = isSimilarToEditorContent . printAutocompleteItem
             newAutocompleteList <- case maybeAutocompleteState of
                 Just (AutocompleteState autocompleteList _) | not editorContentChanged -> ListWidget.handleListEvent event autocompleteList
-                _ -> pure $ ListWidget.list AutocompleteName (Vec.fromList $ filter isSimilarToEditorContent $ Map.keys defs) 1
+                _ -> pure $ ListWidget.list AutocompleteName items 1 where
+                    items = Vec.fromList $ filter isMatch $ case selected of
+                        Expr _ -> map Expr $ vars ++ primitives ++ refs ++ constructors where
+                            vars = E.Var <$> getVarsAtPath selectionPath expr
+                            primitives = E.Primitive <$> [minBound..]
+                            refs = E.Ref <$> Map.keys defs
+                            constructors = E.Constructor <$> Map.keys constructorTypes
+                        Pattern _ -> map Pattern $ uncurry createConstructorPattern <$> Map.toList constructorTypes
             maybeEditorExtent <- lookupExtent EditorName
             setEditState $ Just $ EditState newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
         where editorContent = head $ getEditContents editor
@@ -323,26 +334,17 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         goBack = liftIO (createAppState defs renderMode $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
         edit = setEditState $ Just $ EditState initialEditor Nothing
         initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialEditorContent
-        initialEditorContent = case selected of
-            Expr (E.Ref name) -> name
-            Expr (E.Var name) -> name
-            Expr (E.Constructor name) -> name
-            Expr (E.Int n) -> show n
-            Expr (E.Primitive p) -> Primitive.getDisplayName p
-            Pattern (P.Var name) -> name
-            Pattern (P.Constructor name _) -> name
-            Pattern (P.Int n) -> show n
-            _ -> ""
+        initialEditorContent = printAutocompleteItem selected
         cancelEdit = setEditState Nothing
         submitEditorContent editorContent = modifyDef $ case Map.lookup editorContent constructorTypes of
-            Just constructorType -> replaceSelected (E.Constructor editorContent) (P.Constructor editorContent wildcards) where
-                wildcards = replicate constructorArity P.Wildcard
-                constructorArity = arity constructorType
+            Just constructorType -> replaceSelected (E.Constructor editorContent) (createConstructorPattern editorContent constructorType)
             Nothing -> case readMaybe editorContent of
                 Just int -> replaceSelected (E.Int int) (P.Int int)
                 Nothing -> replaceSelected (E.Var editorContent) (P.Var editorContent)
         submitAutocompleteSelection (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
-            Just (_, ref) -> modifyDef $ modifySelected (const $ E.Ref ref) id
+            Just (_, selectedItem) -> modifyDef $ case selectedItem of
+                Expr expr -> modifySelected (const expr) id
+                Pattern pattern -> modifySelected id (const pattern)
             _ -> continue appState
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern expr
@@ -366,9 +368,40 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         renderModeIndex = fromJust $ elemIndex renderMode renderModes
         renderModes = [Parens, NoParens, OneWordPerLine]
 
+printAutocompleteItem :: Selectable -> String
+printAutocompleteItem item = case item of
+    Expr (E.Ref name) -> name
+    Expr (E.Var name) -> name
+    Expr (E.Constructor name) -> name
+    Expr (E.Int n) -> show n
+    Expr (E.Primitive p) -> Primitive.getDisplayName p
+    Pattern (P.Var name) -> name
+    Pattern (P.Constructor name _) -> name
+    Pattern (P.Int n) -> show n
+    _ -> ""
+
+createConstructorPattern :: E.ConstructorName -> T.Type -> P.Pattern
+createConstructorPattern name t = P.Constructor name wildcards where
+    wildcards = replicate (arity t) P.Wildcard
+
 arity :: T.Type -> Int
 arity (T.Fn _ resultType) = 1 + arity resultType
 arity _ = 0
+
+getVarsAtPath :: E.Path -> E.Expr -> [E.VarName]
+getVarsAtPath path expr = case path of
+    [] -> []
+    edge:restOfPath -> case expr of
+        E.Fn alts | odd edge -> getVars pattern ++ getVarsAtPath restOfPath body where
+            (pattern, body) = alts NonEmpty.!! div edge 2
+        E.Call callee _ | edge == 0 -> getVarsAtPath restOfPath callee
+        E.Call _ arg | edge == 1 -> getVarsAtPath restOfPath arg
+        _ -> error "invalid path"
+
+getVars :: P.Pattern -> [E.VarName]
+getVars (P.Var name) = [name]
+getVars (P.Constructor _ children) = children >>= getVars
+getVars _ = []
 
 modifyAtPathInExpr :: E.Path -> (E.Expr -> E.Expr) -> (P.Pattern -> P.Pattern) -> E.Expr -> E.Expr
 modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of

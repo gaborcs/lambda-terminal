@@ -8,7 +8,7 @@ data Primitive
     | Plus
     | Minus
     | Times
-    deriving (Eq, Show)
+    deriving (Eq, Show, Bounded, Enum)
 
 getDisplayName :: Primitive -> String
 getDisplayName Equals = "="
