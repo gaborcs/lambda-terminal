@@ -94,7 +94,7 @@ draw (AppState defs renderMode locationHistory maybeEditState inferResult evalRe
             [ translateBy autocompleteOffset autocomplete, layout ] where
             autocompleteOffset = Brick.Types.Location (editorX, editorY + 1)
             Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
-            autocomplete = hLimit 20 $ vLimit (min autocompleteListLength 5) $ modifyDefAttr (flip Vty.withBackColor gray) $
+            autocomplete = hLimit 20 $ vLimit (min autocompleteListLength 5) $
                 ListWidget.renderList renderAutocompleteItem True autocompleteList
             autocompleteListLength = length $ ListWidget.listElements autocompleteList
         _ -> [ layout ]
@@ -118,8 +118,11 @@ draw (AppState defs renderMode locationHistory maybeEditState inferResult evalRe
         Value v -> fromMaybe "" $ prettyPrintValue v
 
 renderAutocompleteItem :: Bool -> Selectable -> Widget n
-renderAutocompleteItem isSelected = color . str . printAutocompleteItem where
-    color = modifyDefAttr (flip Vty.withForeColor $ if isSelected then white else black)
+renderAutocompleteItem isSelected item = color $ padRight Max $ str (printAutocompleteItem item) where
+    color = modifyDefAttr $
+        if isSelected
+        then flip Vty.withBackColor Vty.brightCyan . flip Vty.withForeColor black
+        else flip Vty.withBackColor Vty.blue . flip Vty.withForeColor white
     white = Vty.rgbColor 255 255 255
     black = Vty.rgbColor 0 0 0
 
