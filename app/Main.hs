@@ -184,10 +184,11 @@ renderPattern :: P.Pattern -> Renderer
 renderPattern pattern renderMode (RenderChild renderChild) = case pattern of
     P.Wildcard -> (OneWord, str "_")
     P.Var var -> (OneWord, str var)
-    P.Constructor name patterns -> (OneLine, hBox $ intersperse (str " ") (str name : renderedChildren)) where
-        renderedChildren = addParensIfNeeded <$> zipWith renderChild [0..] renderers
+    P.Constructor name children -> (resultType, hBox $ intersperse (str " ") (str name : renderedChildren)) where
+        resultType = if null children then OneWord else OneLine
+        renderedChildren = addParensIfNeeded <$> zipWith renderChild [0..] childRenderers
         addParensIfNeeded (resultType, renderedChild) = withParensIf (resultType /= OneWord) renderedChild
-        renderers = renderPattern <$> patterns
+        childRenderers = renderPattern <$> children
     P.Int n -> (OneWord, str $ show n)
 
 indent :: Widget n -> Widget n
