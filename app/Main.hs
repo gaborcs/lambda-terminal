@@ -32,7 +32,7 @@ import qualified Type as T
 import qualified Value as V
 
 data AppState = AppState Defs RenderMode LocationHistory (Maybe EditState) InferResult EvalResult
-data AppResourceName = EditorName | AutocompleteName deriving (Eq, Ord, Show)
+data AppResourceName = EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 type Defs = Map.Map E.ExprName E.Expr
 data RenderMode = Parens | NoParens | OneWordPerLine deriving Eq
@@ -98,7 +98,7 @@ draw (AppState defs renderMode locationHistory maybeEditState inferResult evalRe
                 ListWidget.renderList renderAutocompleteItem True autocompleteList
             autocompleteListLength = length $ ListWidget.listElements autocompleteList
         _ -> [ layout ]
-    layout = hBorderWithLabel title <=> padBottom Max coloredExpr <=> str bottomStr
+    layout = hBorderWithLabel title <=> viewport Viewport Both coloredExpr <=> str bottomStr
     title = str $ "  " ++ exprName ++ "  "
     coloredExpr = modifyDefAttr (flip Vty.withForeColor gray) renderedExpr -- unselected parts of the expression are gray
     gray = Vty.rgbColor 128 128 128 -- this shade seems to work well on both light and dark backgrounds
@@ -128,14 +128,13 @@ renderAutocompleteItem isSelected item = color $ padRight Max $ str (printAutoco
 
 renderWithAttrs :: RenderMode -> Maybe EditState -> Selection -> Maybe TypeError -> Renderer -> RenderResult
 renderWithAttrs renderMode maybeEditState selection maybeTypeError renderer = case maybeEditState of
-    Just (EditState editor _) | selected -> (OneWord, highlight $ hLimit (length editStr + 1) renderedEditor) where
+    Just (EditState editor _) | selected -> (OneWord, visible . highlight $ hLimit (length editStr + 1) renderedEditor) where
         editStr = head $ getEditContents editor
         renderedEditor = renderEditor (str . head) True editor
-    _ -> (renderResultType, highlightIfSelected $ makeRedIfNeeded widget)
+    _ -> (renderResultType, (if selected then visible . highlight else id) $ makeRedIfNeeded widget)
     where
         selected = selection == ContainsSelection []
         withinSelection = selection == WithinSelection
-        highlightIfSelected = if selected then highlight else id
         makeRedIfNeeded = if hasError && (selected || withinSelection) then makeRed else id
         hasError = maybe False hasErrorAtRoot maybeTypeError
         makeRed = modifyDefAttr $ flip Vty.withForeColor Vty.red
