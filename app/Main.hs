@@ -31,7 +31,15 @@ import qualified Primitive
 import qualified Type as T
 import qualified Value as V
 
-data AppState = AppState Defs RenderMode Clipboard LocationHistory (Maybe EditState) InferResult EvalResult
+data AppState = AppState
+    { defs :: Defs
+    , renderMode :: RenderMode
+    , clipboard :: Clipboard
+    , locationHistory :: LocationHistory
+    , editState :: Maybe EditState
+    , inferResult :: InferResult
+    , evalResult :: EvalResult
+    }
 data AppResourceName = EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 type Defs = Map.Map E.ExprName E.Expr
@@ -319,9 +327,9 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         navForward = nav nextSiblingPath
         nav path = case getItemAtPath path of
             Just itemAtPath -> liftIO getNewAppState >>= continue where
-                getNewAppState = AppState defs renderMode clipboard newLocationHistory maybeEditState inferResult <$> getNewEvalResult
-                newLocationHistory = (exprName, path) NonEmpty.:| past
-                getNewEvalResult = createEvalResult defs itemAtPath
+                getNewAppState = do
+                    newEvalResult <- createEvalResult defs itemAtPath
+                    return $ appState { locationHistory = (exprName, path) NonEmpty.:| past, evalResult = newEvalResult }
             Nothing -> continue appState
         parentPath = if null selectionPath then [] else init selectionPath
         pathToFirstChildOfSelected = selectionPath ++ [0]
@@ -357,7 +365,7 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
             _ -> continue appState
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern expr
-        setEditState newEditState = continue $ AppState defs renderMode clipboard locationHistory newEditState inferResult maybeEvalResult
+        setEditState newEditState = continue $ appState { editState = newEditState }
         callSelected = modifySelectedExpr $ \expr -> E.Call expr E.Hole
         applyFnToSelected = modifySelectedExpr $ E.Call E.Hole
         wrapSelectedInFn = modifySelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
@@ -371,12 +379,12 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode clipboard locationHistory) >>= continue
         switchToNextRenderMode = switchRenderMode nextRenderMode
         switchToPrevRenderMode = switchRenderMode prevRenderMode
-        switchRenderMode newRenderMode = continue $ AppState defs newRenderMode clipboard locationHistory maybeEditState inferResult maybeEvalResult
+        switchRenderMode newRenderMode = continue $ appState { renderMode = newRenderMode }
         nextRenderMode = renderModes !! mod (renderModeIndex + 1) (length renderModes)
         prevRenderMode = renderModes !! mod (renderModeIndex - 1) (length renderModes)
         renderModeIndex = fromJust $ elemIndex renderMode renderModes
         renderModes = [Parens, NoParens, OneWordPerLine]
-        copy = continue $ AppState defs renderMode clipboardAfterCopy locationHistory maybeEditState inferResult maybeEvalResult
+        copy = continue $ appState { clipboard = clipboardAfterCopy }
         clipboardAfterCopy = case selected of
             Expr e -> Clipboard (Just e) patternClipboard
             Pattern p -> Clipboard exprClipboard (Just p)
