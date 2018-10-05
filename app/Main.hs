@@ -13,6 +13,7 @@ import Brick hiding (Location)
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
 import Eval
+import History
 import Infer
 import PrettyPrintType
 import PrettyPrintValue
@@ -35,7 +36,7 @@ data AppState = AppState
     { defs :: Defs
     , wrappingStyle :: WrappingStyle
     , clipboard :: Clipboard
-    , locationHistory :: LocationHistory
+    , locationHistory :: History Location
     , editState :: Maybe EditState
     , inferResult :: InferResult
     , evalResult :: EvalResult
@@ -44,7 +45,6 @@ data AppResourceName = EditorName | AutocompleteName | Viewport deriving (Eq, Or
 type AppWidget = Widget AppResourceName
 type Defs = Map.Map E.ExprName E.Expr
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
-type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recent
 type Location = (E.ExprName, E.Path)
 data EditState = EditState (Editor String AppResourceName) (Maybe AutocompleteState)
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
@@ -63,14 +63,14 @@ main :: IO ()
 main = do
     let initialClipboard = Clipboard Nothing Nothing
     let initialLocation = ("main", [])
-    let initialLocationHistory = initialLocation NonEmpty.:| []
+    let initialLocationHistory = History.create initialLocation
     initialState <- createAppState Defs.defs NoParens initialClipboard initialLocationHistory
     defaultMain app initialState
     return ()
 
-createAppState :: Defs -> WrappingStyle -> Clipboard -> LocationHistory -> IO AppState
+createAppState :: Defs -> WrappingStyle -> Clipboard -> History Location -> IO AppState
 createAppState defs wrappingStyle clipboard locationHistory = do
-    let (exprName, selectionPath) = NonEmpty.head locationHistory
+    let (exprName, selectionPath) = present locationHistory
     let expr = fromJust $ Map.lookup exprName defs
     let inferResult = inferType constructorTypes defs expr
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
@@ -112,7 +112,7 @@ draw (AppState defs wrappingStyle _ locationHistory maybeEditState inferResult e
     title = str $ "  " ++ exprName ++ "  "
     coloredExpr = modifyDefAttr (flip Vty.withForeColor gray) renderedExpr -- unselected parts of the expression are gray
     gray = Vty.rgbColor 128 128 128 -- this shade seems to work well on both light and dark backgrounds
-    (exprName, selectionPath) = NonEmpty.head locationHistory
+    (exprName, selectionPath) = present locationHistory
     expr = fromJust $ Map.lookup exprName defs
     (_, renderedExpr) = renderWithAttrs wrappingStyle maybeEditState (ContainsSelection selectionPath) maybeTypeError (renderExpr expr)
     maybeTypeError = case inferResult of
@@ -295,7 +295,8 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         where editorContent = head $ getEditContents editor
     Nothing -> case event of
         Vty.EvKey Vty.KEnter [] -> goToDefinition
-        Vty.EvKey Vty.KEsc [] -> goBack
+        Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory
+        Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory
         Vty.EvKey Vty.KUp [] -> navToParent
         Vty.EvKey Vty.KDown [] -> navToChild
         Vty.EvKey Vty.KLeft [] -> navBackward
@@ -319,7 +320,7 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         _ -> continue appState
     where
         AppState defs wrappingStyle clipboard locationHistory maybeEditState inferResult maybeEvalResult = appState
-        (exprName, selectionPath) NonEmpty.:| past = locationHistory
+        (exprName, selectionPath) = present locationHistory
         expr = fromJust $ Map.lookup exprName defs
         navToParent = nav parentPath
         navToChild = nav pathToFirstChildOfSelected
@@ -329,7 +330,7 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
             Just itemAtPath -> liftIO getNewAppState >>= continue where
                 getNewAppState = do
                     newEvalResult <- createEvalResult defs itemAtPath
-                    return $ appState { locationHistory = (exprName, path) NonEmpty.:| past, evalResult = newEvalResult }
+                    return $ appState { locationHistory = replacePresent (exprName, path) locationHistory, evalResult = newEvalResult }
             Nothing -> continue appState
         parentPath = if null selectionPath then [] else init selectionPath
         pathToFirstChildOfSelected = selectionPath ++ [0]
@@ -345,10 +346,11 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         goToDefinition = case selected of
             Expr (E.Ref exprName) ->
                 if Map.member exprName defs
-                then liftIO (createAppState defs wrappingStyle clipboard $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
+                then liftIO (createAppState defs wrappingStyle clipboard $ push (exprName, []) locationHistory) >>= continue
                 else continue appState
             _ -> continue appState
-        goBack = liftIO (createAppState defs wrappingStyle clipboard $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
+        goBackInLocationHistory = liftIO (createAppState defs wrappingStyle clipboard $ goBack locationHistory) >>= continue
+        goForwardInLocationHistory = liftIO (createAppState defs wrappingStyle clipboard $ goForward locationHistory) >>= continue
         edit = setEditState $ Just $ EditState initialEditor Nothing
         initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialEditorContent
         initialEditorContent = printAutocompleteItem selected
@@ -372,7 +374,7 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         modifySelectedExpr modify = liftIO (createAppState newDefs wrappingStyle clipboard newLocationHistory) >>= continue where
             newDefs = Map.insert exprName newExpr defs
             newExpr = modifyAtPathInExpr pathToExprContainingSelection modify id expr
-            newLocationHistory = (exprName, pathToExprContainingSelection) NonEmpty.:| past
+            newLocationHistory = push (exprName, pathToExprContainingSelection) locationHistory
             pathToExprContainingSelection = dropPatternPartOfPath expr selectionPath
         addAlternativeToSelected = maybe (continue appState) modifyDef (addAlternativeAtPath selectionPath expr)
         deleteSelected = modifyDef $ replaceSelected E.Hole P.Wildcard
