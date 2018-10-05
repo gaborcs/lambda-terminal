@@ -311,8 +311,8 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar '|') [] -> addAlternativeToSelected
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
-        Vty.EvKey (Vty.KChar 'r') [] -> switchToNextWrappingStyle
-        Vty.EvKey (Vty.KChar 'R') [] -> switchToPrevWrappingStyle
+        Vty.EvKey (Vty.KChar '\t') [] -> switchToNextWrappingStyle
+        Vty.EvKey Vty.KBackTab [] -> switchToPrevWrappingStyle
         Vty.EvKey (Vty.KChar 'c') [] -> copy
         Vty.EvKey (Vty.KChar 'p') [] -> paste
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
