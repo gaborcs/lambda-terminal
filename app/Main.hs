@@ -43,7 +43,7 @@ data AppState = AppState
 data AppResourceName = EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 type Defs = Map.Map E.ExprName E.Expr
-data RenderMode = Parens | NoParens | OneWordPerLine deriving Eq
+data RenderMode = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
 type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recent
 type Location = (E.ExprName, E.Path)
 data EditState = EditState (Editor String AppResourceName) (Maybe AutocompleteState)
@@ -377,13 +377,9 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         addAlternativeToSelected = maybe (continue appState) modifyDef (addAlternativeAtPath selectionPath expr)
         deleteSelected = modifyDef $ replaceSelected E.Hole P.Wildcard
         modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode clipboard locationHistory) >>= continue
-        switchToNextRenderMode = switchRenderMode nextRenderMode
-        switchToPrevRenderMode = switchRenderMode prevRenderMode
+        switchToNextRenderMode = switchRenderMode $ if renderMode == maxBound then minBound else succ renderMode
+        switchToPrevRenderMode = switchRenderMode $ if renderMode == minBound then maxBound else pred renderMode
         switchRenderMode newRenderMode = continue $ appState { renderMode = newRenderMode }
-        nextRenderMode = renderModes !! mod (renderModeIndex + 1) (length renderModes)
-        prevRenderMode = renderModes !! mod (renderModeIndex - 1) (length renderModes)
-        renderModeIndex = fromJust $ elemIndex renderMode renderModes
-        renderModes = [Parens, NoParens, OneWordPerLine]
         copy = continue $ appState { clipboard = clipboardAfterCopy }
         clipboardAfterCopy = case selected of
             Expr e -> Clipboard (Just e) patternClipboard
