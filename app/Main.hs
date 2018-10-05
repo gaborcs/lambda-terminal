@@ -33,7 +33,7 @@ import qualified Value as V
 
 data AppState = AppState
     { defs :: Defs
-    , renderMode :: RenderMode
+    , wrappingStyle :: WrappingStyle
     , clipboard :: Clipboard
     , locationHistory :: LocationHistory
     , editState :: Maybe EditState
@@ -43,7 +43,7 @@ data AppState = AppState
 data AppResourceName = EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 type Defs = Map.Map E.ExprName E.Expr
-data RenderMode = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
+data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
 type LocationHistory = NonEmpty.NonEmpty Location -- from current to least recent
 type Location = (E.ExprName, E.Path)
 data EditState = EditState (Editor String AppResourceName) (Maybe AutocompleteState)
@@ -54,7 +54,7 @@ data Clipboard = Clipboard (Maybe E.Expr) (Maybe P.Pattern)
 data EvalResult = Timeout | Error | Value V.Value
 data Selectable = Expr E.Expr | Pattern P.Pattern
 newtype RenderChild = RenderChild (E.ChildIndex -> Renderer -> RenderResult)
-type Renderer = RenderMode -> RenderChild -> RenderResult
+type Renderer = WrappingStyle -> RenderChild -> RenderResult
 type RenderResult = (RenderResultType, AppWidget)
 data RenderResultType = OneWord | OneLine | MultiLine deriving Eq
 data Selection = ContainsSelection E.Path | WithinSelection | NoSelection deriving Eq
@@ -68,14 +68,14 @@ main = do
     defaultMain app initialState
     return ()
 
-createAppState :: Defs -> RenderMode -> Clipboard -> LocationHistory -> IO AppState
-createAppState defs renderMode clipboard locationHistory = do
+createAppState :: Defs -> WrappingStyle -> Clipboard -> LocationHistory -> IO AppState
+createAppState defs wrappingStyle clipboard locationHistory = do
     let (exprName, selectionPath) = NonEmpty.head locationHistory
     let expr = fromJust $ Map.lookup exprName defs
     let inferResult = inferType constructorTypes defs expr
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
     evalResult <- createEvalResult defs selected
-    return $ AppState defs renderMode clipboard locationHistory Nothing inferResult evalResult
+    return $ AppState defs wrappingStyle clipboard locationHistory Nothing inferResult evalResult
 
 createEvalResult :: Defs -> Selectable -> IO EvalResult
 createEvalResult defs selectable = do
@@ -98,7 +98,7 @@ app = App
     , appAttrMap = const $ attrMap Vty.defAttr [] }
 
 draw :: AppState -> [AppWidget]
-draw (AppState defs renderMode _ locationHistory maybeEditState inferResult evalResult) = ui where
+draw (AppState defs wrappingStyle _ locationHistory maybeEditState inferResult evalResult) = ui where
     ui = case maybeEditState of
         Just (EditState _ (Just (AutocompleteState autocompleteList editorExtent))) | autocompleteListLength > 0 ->
             [ translateBy autocompleteOffset autocomplete, layout ] where
@@ -114,7 +114,7 @@ draw (AppState defs renderMode _ locationHistory maybeEditState inferResult eval
     gray = Vty.rgbColor 128 128 128 -- this shade seems to work well on both light and dark backgrounds
     (exprName, selectionPath) = NonEmpty.head locationHistory
     expr = fromJust $ Map.lookup exprName defs
-    (_, renderedExpr) = renderWithAttrs renderMode maybeEditState (ContainsSelection selectionPath) maybeTypeError (renderExpr expr)
+    (_, renderedExpr) = renderWithAttrs wrappingStyle maybeEditState (ContainsSelection selectionPath) maybeTypeError (renderExpr expr)
     maybeTypeError = case inferResult of
         TypeError typeError -> Just typeError
         _ -> Nothing
@@ -136,8 +136,8 @@ renderAutocompleteItem isSelected item = color $ padRight Max $ str (printAutoco
     white = Vty.rgbColor 255 255 255
     black = Vty.rgbColor 0 0 0
 
-renderWithAttrs :: RenderMode -> Maybe EditState -> Selection -> Maybe TypeError -> Renderer -> RenderResult
-renderWithAttrs renderMode maybeEditState selection maybeTypeError renderer = case maybeEditState of
+renderWithAttrs :: WrappingStyle -> Maybe EditState -> Selection -> Maybe TypeError -> Renderer -> RenderResult
+renderWithAttrs wrappingStyle maybeEditState selection maybeTypeError renderer = case maybeEditState of
     Just (EditState editor _) | selected -> (OneWord, visible . highlight $ hLimit (length editStr + 1) renderedEditor) where
         editStr = head $ getEditContents editor
         renderedEditor = renderEditor (str . head) True editor
@@ -148,11 +148,11 @@ renderWithAttrs renderMode maybeEditState selection maybeTypeError renderer = ca
         makeRedIfNeeded = if hasError && (selected || withinSelection) then makeRed else id
         hasError = maybe False hasErrorAtRoot maybeTypeError
         makeRed = modifyDefAttr $ flip Vty.withForeColor Vty.red
-        (renderResultType, widget) = renderer renderMode $ RenderChild renderChild
-        renderChild index = renderWithAttrs renderMode maybeEditState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
+        (renderResultType, widget) = renderer wrappingStyle $ RenderChild renderChild
+        renderChild index = renderWithAttrs wrappingStyle maybeEditState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
 
 renderExpr :: E.Expr -> Renderer
-renderExpr expr renderMode (RenderChild renderChild) = case expr of
+renderExpr expr wrappingStyle (RenderChild renderChild) = case expr of
     E.Hole -> (OneWord, str "_")
     E.Ref exprName -> (OneWord, str exprName)
     E.Var var -> (OneWord, str var)
@@ -169,7 +169,7 @@ renderExpr expr renderMode (RenderChild renderChild) = case expr of
                 then str "match" <=> indent renderedArg <=> indent renderedCallee
                 else str "match " <+> renderedArg <=> indent renderedCallee
         _ -> if shouldBeMultiLine then multiLineResult else oneLineResult where
-            shouldBeMultiLine = case renderMode of
+            shouldBeMultiLine = case wrappingStyle of
                 Parens -> calleeResultType == MultiLine || argResultType == MultiLine
                 NoParens -> calleeResultType == MultiLine || argResultType /= OneWord
                 OneWordPerLine -> True
@@ -195,7 +195,7 @@ renderAlternative (RenderChild renderChild) alternativeIndex (pattern, expr) =
         (exprResultType, renderedExpr) = renderChild (2 * alternativeIndex + 1) $ renderExpr expr
 
 renderPattern :: P.Pattern -> Renderer
-renderPattern pattern renderMode (RenderChild renderChild) = case pattern of
+renderPattern pattern wrappingStyle (RenderChild renderChild) = case pattern of
     P.Wildcard -> (OneWord, str "_")
     P.Var var -> (OneWord, str var)
     P.Constructor name children -> (resultType, hBox $ intersperse (str " ") (str name : renderedChildren)) where
@@ -311,14 +311,14 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar '|') [] -> addAlternativeToSelected
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
-        Vty.EvKey (Vty.KChar 'r') [] -> switchToNextRenderMode
-        Vty.EvKey (Vty.KChar 'R') [] -> switchToPrevRenderMode
+        Vty.EvKey (Vty.KChar 'r') [] -> switchToNextWrappingStyle
+        Vty.EvKey (Vty.KChar 'R') [] -> switchToPrevWrappingStyle
         Vty.EvKey (Vty.KChar 'c') [] -> copy
         Vty.EvKey (Vty.KChar 'p') [] -> paste
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     where
-        AppState defs renderMode clipboard locationHistory maybeEditState inferResult maybeEvalResult = appState
+        AppState defs wrappingStyle clipboard locationHistory maybeEditState inferResult maybeEvalResult = appState
         (exprName, selectionPath) NonEmpty.:| past = locationHistory
         expr = fromJust $ Map.lookup exprName defs
         navToParent = nav parentPath
@@ -345,10 +345,10 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         goToDefinition = case selected of
             Expr (E.Ref exprName) ->
                 if Map.member exprName defs
-                then liftIO (createAppState defs renderMode clipboard $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
+                then liftIO (createAppState defs wrappingStyle clipboard $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
                 else continue appState
             _ -> continue appState
-        goBack = liftIO (createAppState defs renderMode clipboard $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
+        goBack = liftIO (createAppState defs wrappingStyle clipboard $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
         edit = setEditState $ Just $ EditState initialEditor Nothing
         initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialEditorContent
         initialEditorContent = printAutocompleteItem selected
@@ -369,17 +369,17 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         callSelected = modifySelectedExpr $ \expr -> E.Call expr E.Hole
         applyFnToSelected = modifySelectedExpr $ E.Call E.Hole
         wrapSelectedInFn = modifySelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
-        modifySelectedExpr modify = liftIO (createAppState newDefs renderMode clipboard newLocationHistory) >>= continue where
+        modifySelectedExpr modify = liftIO (createAppState newDefs wrappingStyle clipboard newLocationHistory) >>= continue where
             newDefs = Map.insert exprName newExpr defs
             newExpr = modifyAtPathInExpr pathToExprContainingSelection modify id expr
             newLocationHistory = (exprName, pathToExprContainingSelection) NonEmpty.:| past
             pathToExprContainingSelection = dropPatternPartOfPath expr selectionPath
         addAlternativeToSelected = maybe (continue appState) modifyDef (addAlternativeAtPath selectionPath expr)
         deleteSelected = modifyDef $ replaceSelected E.Hole P.Wildcard
-        modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode clipboard locationHistory) >>= continue
-        switchToNextRenderMode = switchRenderMode $ if renderMode == maxBound then minBound else succ renderMode
-        switchToPrevRenderMode = switchRenderMode $ if renderMode == minBound then maxBound else pred renderMode
-        switchRenderMode newRenderMode = continue $ appState { renderMode = newRenderMode }
+        modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) wrappingStyle clipboard locationHistory) >>= continue
+        switchToNextWrappingStyle = switchWrappingStyle $ if wrappingStyle == maxBound then minBound else succ wrappingStyle
+        switchToPrevWrappingStyle = switchWrappingStyle $ if wrappingStyle == minBound then maxBound else pred wrappingStyle
+        switchWrappingStyle newWrappingStyle = continue $ appState { wrappingStyle = newWrappingStyle }
         copy = continue $ appState { clipboard = clipboardAfterCopy }
         clipboardAfterCopy = case selected of
             Expr e -> Clipboard (Just e) patternClipboard
