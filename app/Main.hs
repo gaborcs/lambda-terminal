@@ -260,8 +260,8 @@ handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppSta
 handleEvent appState (VtyEvent event) = case maybeEditState of
     Just (EditState editor maybeAutocompleteState) -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit
-        Vty.EvKey Vty.KEnter [] -> maybe (continue appState) submitAutocompleteSelection maybeAutocompleteState
-        Vty.EvKey (Vty.KChar ' ') [] -> submitEditorContent editorContent
+        Vty.EvKey Vty.KEnter [] -> maybe (continue appState) commitAutocompleteSelection maybeAutocompleteState
+        Vty.EvKey (Vty.KChar ' ') [] -> commitEditorContent editorContent
         _ -> do
             newEditor <- case event of
                 -- ignore up/down as they are used to control the autocomplete
@@ -345,12 +345,12 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialEditorContent
         initialEditorContent = printAutocompleteItem selected
         cancelEdit = setEditState Nothing
-        submitEditorContent editorContent = modifyDef $ case Map.lookup editorContent constructorTypes of
+        commitEditorContent editorContent = modifyDef $ case Map.lookup editorContent constructorTypes of
             Just constructorType -> replaceSelected (E.Constructor editorContent) (createConstructorPattern editorContent constructorType)
             Nothing -> case readMaybe editorContent of
                 Just int -> replaceSelected (E.Int int) (P.Int int)
                 Nothing -> replaceSelected (E.Var editorContent) (P.Var editorContent)
-        submitAutocompleteSelection (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
+        commitAutocompleteSelection (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
             Just (_, selectedItem) -> modifyDef $ case selectedItem of
                 Expr expr -> modifySelected (const expr) id
                 Pattern pattern -> modifySelected id (const pattern)
