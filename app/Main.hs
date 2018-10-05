@@ -31,7 +31,7 @@ import qualified Primitive
 import qualified Type as T
 import qualified Value as V
 
-data AppState = AppState Defs RenderMode LocationHistory (Maybe EditState) InferResult EvalResult
+data AppState = AppState Defs RenderMode Clipboard LocationHistory (Maybe EditState) InferResult EvalResult
 data AppResourceName = EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 type Defs = Map.Map E.ExprName E.Expr
@@ -42,6 +42,7 @@ data EditState = EditState (Editor String AppResourceName) (Maybe AutocompleteSt
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
 type AutocompleteList = ListWidget.List AppResourceName Selectable
 type EditorExtent = Extent AppResourceName
+data Clipboard = Clipboard (Maybe E.Expr) (Maybe P.Pattern)
 data EvalResult = Timeout | Error | Value V.Value
 data Selectable = Expr E.Expr | Pattern P.Pattern
 newtype RenderChild = RenderChild (E.ChildIndex -> Renderer -> RenderResult)
@@ -52,20 +53,21 @@ data Selection = ContainsSelection E.Path | WithinSelection | NoSelection derivi
 
 main :: IO ()
 main = do
+    let initialClipboard = Clipboard Nothing Nothing
     let initialLocation = ("main", [])
     let initialLocationHistory = initialLocation NonEmpty.:| []
-    initialState <- createAppState Defs.defs NoParens initialLocationHistory
+    initialState <- createAppState Defs.defs NoParens initialClipboard initialLocationHistory
     defaultMain app initialState
     return ()
 
-createAppState :: Defs -> RenderMode -> LocationHistory -> IO AppState
-createAppState defs renderMode locationHistory = do
+createAppState :: Defs -> RenderMode -> Clipboard -> LocationHistory -> IO AppState
+createAppState defs renderMode clipboard locationHistory = do
     let (exprName, selectionPath) = NonEmpty.head locationHistory
     let expr = fromJust $ Map.lookup exprName defs
     let inferResult = inferType constructorTypes defs expr
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
     evalResult <- createEvalResult defs selected
-    return $ AppState defs renderMode locationHistory Nothing inferResult evalResult
+    return $ AppState defs renderMode clipboard locationHistory Nothing inferResult evalResult
 
 createEvalResult :: Defs -> Selectable -> IO EvalResult
 createEvalResult defs selectable = do
@@ -88,7 +90,7 @@ app = App
     , appAttrMap = const $ attrMap Vty.defAttr [] }
 
 draw :: AppState -> [AppWidget]
-draw (AppState defs renderMode locationHistory maybeEditState inferResult evalResult) = ui where
+draw (AppState defs renderMode _ locationHistory maybeEditState inferResult evalResult) = ui where
     ui = case maybeEditState of
         Just (EditState _ (Just (AutocompleteState autocompleteList editorExtent))) | autocompleteListLength > 0 ->
             [ translateBy autocompleteOffset autocomplete, layout ] where
@@ -303,10 +305,12 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
         Vty.EvKey (Vty.KChar 'r') [] -> switchToNextRenderMode
         Vty.EvKey (Vty.KChar 'R') [] -> switchToPrevRenderMode
+        Vty.EvKey (Vty.KChar 'c') [] -> copy
+        Vty.EvKey (Vty.KChar 'p') [] -> paste
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     where
-        AppState defs renderMode locationHistory maybeEditState inferResult maybeEvalResult = appState
+        AppState defs renderMode clipboard locationHistory maybeEditState inferResult maybeEvalResult = appState
         (exprName, selectionPath) NonEmpty.:| past = locationHistory
         expr = fromJust $ Map.lookup exprName defs
         navToParent = nav parentPath
@@ -315,7 +319,7 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         navForward = nav nextSiblingPath
         nav path = case getItemAtPath path of
             Just itemAtPath -> liftIO getNewAppState >>= continue where
-                getNewAppState = AppState defs renderMode newLocationHistory maybeEditState inferResult <$> getNewEvalResult
+                getNewAppState = AppState defs renderMode clipboard newLocationHistory maybeEditState inferResult <$> getNewEvalResult
                 newLocationHistory = (exprName, path) NonEmpty.:| past
                 getNewEvalResult = createEvalResult defs itemAtPath
             Nothing -> continue appState
@@ -333,10 +337,10 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         goToDefinition = case selected of
             Expr (E.Ref exprName) ->
                 if Map.member exprName defs
-                then liftIO (createAppState defs renderMode $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
+                then liftIO (createAppState defs renderMode clipboard $ NonEmpty.cons (exprName, []) locationHistory) >>= continue
                 else continue appState
             _ -> continue appState
-        goBack = liftIO (createAppState defs renderMode $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
+        goBack = liftIO (createAppState defs renderMode clipboard $ fromMaybe locationHistory $ NonEmpty.nonEmpty past) >>= continue
         edit = setEditState $ Just $ EditState initialEditor Nothing
         initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialEditorContent
         initialEditorContent = printAutocompleteItem selected
@@ -353,25 +357,31 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
             _ -> continue appState
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern expr
-        setEditState newEditState = continue $ AppState defs renderMode locationHistory newEditState inferResult maybeEvalResult
+        setEditState newEditState = continue $ AppState defs renderMode clipboard locationHistory newEditState inferResult maybeEvalResult
         callSelected = modifySelectedExpr $ \expr -> E.Call expr E.Hole
         applyFnToSelected = modifySelectedExpr $ E.Call E.Hole
         wrapSelectedInFn = modifySelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
-        modifySelectedExpr modify = liftIO (createAppState newDefs renderMode newLocationHistory) >>= continue where
+        modifySelectedExpr modify = liftIO (createAppState newDefs renderMode clipboard newLocationHistory) >>= continue where
             newDefs = Map.insert exprName newExpr defs
             newExpr = modifyAtPathInExpr pathToExprContainingSelection modify id expr
             newLocationHistory = (exprName, pathToExprContainingSelection) NonEmpty.:| past
             pathToExprContainingSelection = dropPatternPartOfPath expr selectionPath
         addAlternativeToSelected = maybe (continue appState) modifyDef (addAlternativeAtPath selectionPath expr)
         deleteSelected = modifyDef $ replaceSelected E.Hole P.Wildcard
-        modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode locationHistory) >>= continue
+        modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) renderMode clipboard locationHistory) >>= continue
         switchToNextRenderMode = switchRenderMode nextRenderMode
         switchToPrevRenderMode = switchRenderMode prevRenderMode
-        switchRenderMode newRenderMode = continue $ AppState defs newRenderMode locationHistory maybeEditState inferResult maybeEvalResult
+        switchRenderMode newRenderMode = continue $ AppState defs newRenderMode clipboard locationHistory maybeEditState inferResult maybeEvalResult
         nextRenderMode = renderModes !! mod (renderModeIndex + 1) (length renderModes)
         prevRenderMode = renderModes !! mod (renderModeIndex - 1) (length renderModes)
         renderModeIndex = fromJust $ elemIndex renderMode renderModes
         renderModes = [Parens, NoParens, OneWordPerLine]
+        copy = continue $ AppState defs renderMode clipboardAfterCopy locationHistory maybeEditState inferResult maybeEvalResult
+        clipboardAfterCopy = case selected of
+            Expr e -> Clipboard (Just e) patternClipboard
+            Pattern p -> Clipboard exprClipboard (Just p)
+        paste = modifyDef $ modifySelected (maybe id const exprClipboard) (maybe id const patternClipboard)
+        Clipboard exprClipboard patternClipboard = clipboard
 
 printAutocompleteItem :: Selectable -> String
 printAutocompleteItem item = case item of
