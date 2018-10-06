@@ -38,7 +38,10 @@ data AppState = AppState
     , clipboard :: Clipboard
     , locationHistory :: History Location
     , editState :: Maybe EditState
-    , inferResult :: InferResult
+    , derivedState :: DerivedState
+    }
+data DerivedState = DerivedState
+    { inferResult :: InferResult
     , evalResult :: EvalResult
     }
 data AppResourceName = EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
@@ -59,27 +62,29 @@ type RenderResult = (RenderResultType, AppWidget)
 data RenderResultType = OneWord | OneLine | MultiLine deriving Eq
 data Selection = ContainsSelection E.Path | WithinSelection | NoSelection deriving Eq
 
-main :: IO ()
-main = do
-    let initialClipboard = Clipboard Nothing Nothing
-    let initialLocation = ("main", [])
-    let initialLocationHistory = History.create initialLocation
-    initialState <- createAppState Defs.defs NoParens initialClipboard initialLocationHistory
-    defaultMain app initialState
-    return ()
+main :: IO AppState
+main = createInitialState >>= defaultMain app
 
-createAppState :: Defs -> WrappingStyle -> Clipboard -> History Location -> IO AppState
-createAppState defs wrappingStyle clipboard locationHistory = do
-    let (exprName, selectionPath) = present locationHistory
+createInitialState :: IO AppState
+createInitialState = AppState defs NoParens clipboard locationHistory Nothing <$> createDerivedState defs location where
+    defs = Defs.defs
+    clipboard = Clipboard Nothing Nothing
+    locationHistory = History.create location
+    location = ("main", [])
+
+createDerivedState :: Defs -> Location -> IO DerivedState
+createDerivedState defs location@(exprName, _) =
+    DerivedState (createInferResult defs exprName) <$> createEvalResult defs location
+
+createInferResult :: Defs -> E.ExprName -> InferResult
+createInferResult defs exprName = inferType constructorTypes defs expr where
+    expr = fromJust $ Map.lookup exprName defs
+
+createEvalResult :: Defs -> Location -> IO EvalResult
+createEvalResult defs (exprName, selectionPath) = do
     let expr = fromJust $ Map.lookup exprName defs
-    let inferResult = inferType constructorTypes defs expr
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
-    evalResult <- createEvalResult defs selected
-    return $ AppState defs wrappingStyle clipboard locationHistory Nothing inferResult evalResult
-
-createEvalResult :: Defs -> Selectable -> IO EvalResult
-createEvalResult defs selectable = do
-    let maybeSelectedExpr = case selectable of
+    let maybeSelectedExpr = case selected of
             Expr expr -> Just expr
             _ -> Nothing
     let maybeSelectionValue = maybeSelectedExpr >>= eval defs
@@ -88,6 +93,16 @@ createEvalResult defs selectable = do
         Just (Just v) -> Value v
         Just Nothing -> Error
         Nothing -> Timeout
+
+updateDerivedState :: AppState -> IO AppState
+updateDerivedState appState = do
+    derivedState <- createDerivedState (defs appState) (present $ locationHistory appState)
+    return $ appState { derivedState = derivedState }
+
+updateEvalResult :: AppState -> IO AppState
+updateEvalResult appState = do
+    newEvalResult <- createEvalResult (defs appState) (present $ locationHistory appState)
+    return $ appState { derivedState = (derivedState appState) { evalResult = newEvalResult } }
 
 app :: App AppState e AppResourceName
 app = App
@@ -98,7 +113,7 @@ app = App
     , appAttrMap = const $ attrMap Vty.defAttr [] }
 
 draw :: AppState -> [AppWidget]
-draw (AppState defs wrappingStyle _ locationHistory maybeEditState inferResult evalResult) = ui where
+draw (AppState defs wrappingStyle _ locationHistory maybeEditState (DerivedState inferResult evalResult)) = ui where
     ui = case maybeEditState of
         Just (EditState _ (Just (AutocompleteState autocompleteList editorExtent))) | autocompleteListLength > 0 ->
             [ translateBy autocompleteOffset autocomplete, layout ] where
@@ -319,7 +334,7 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     where
-        AppState defs wrappingStyle clipboard locationHistory maybeEditState inferResult maybeEvalResult = appState
+        AppState defs wrappingStyle clipboard locationHistory maybeEditState _ = appState
         (exprName, selectionPath) = present locationHistory
         expr = fromJust $ Map.lookup exprName defs
         navToParent = nav parentPath
@@ -328,9 +343,7 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         navForward = nav nextSiblingPath
         nav path = case getItemAtPath path of
             Just itemAtPath -> liftIO getNewAppState >>= continue where
-                getNewAppState = do
-                    newEvalResult <- createEvalResult defs itemAtPath
-                    return $ appState { locationHistory = replacePresent (exprName, path) locationHistory, evalResult = newEvalResult }
+                getNewAppState = updateEvalResult appState { locationHistory = replacePresent (exprName, path) locationHistory }
             Nothing -> continue appState
         parentPath = if null selectionPath then [] else init selectionPath
         pathToFirstChildOfSelected = selectionPath ++ [0]
@@ -344,13 +357,11 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         selected = fromJust $ getItemAtPath selectionPath
         getItemAtPath path = getItemAtPathInExpr path expr
         goToDefinition = case selected of
-            Expr (E.Ref exprName) ->
-                if Map.member exprName defs
-                then liftIO (createAppState defs wrappingStyle clipboard $ push (exprName, []) locationHistory) >>= continue
-                else continue appState
+            Expr (E.Ref exprName) | Map.member exprName defs -> liftIO (modifyLocationHistory $ push (exprName, [])) >>= continue
             _ -> continue appState
-        goBackInLocationHistory = liftIO (createAppState defs wrappingStyle clipboard $ goBack locationHistory) >>= continue
-        goForwardInLocationHistory = liftIO (createAppState defs wrappingStyle clipboard $ goForward locationHistory) >>= continue
+        goBackInLocationHistory = liftIO (modifyLocationHistory goBack) >>= continue
+        goForwardInLocationHistory = liftIO (modifyLocationHistory goForward) >>= continue
+        modifyLocationHistory modify = updateDerivedState appState { locationHistory = modify locationHistory }
         edit = setEditState $ Just $ EditState initialEditor Nothing
         initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialEditorContent
         initialEditorContent = printAutocompleteItem selected
@@ -371,14 +382,16 @@ handleEvent appState (VtyEvent event) = case maybeEditState of
         callSelected = modifySelectedExpr $ \expr -> E.Call expr E.Hole
         applyFnToSelected = modifySelectedExpr $ E.Call E.Hole
         wrapSelectedInFn = modifySelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
-        modifySelectedExpr modify = liftIO (createAppState newDefs wrappingStyle clipboard newLocationHistory) >>= continue where
-            newDefs = Map.insert exprName newExpr defs
+        modifySelectedExpr modify = liftIO createNewAppState >>= continue where
+            createNewAppState = updateDerivedState appState
+                { defs = Map.insert exprName newExpr defs
+                , locationHistory = push (exprName, pathToExprContainingSelection) locationHistory
+                }
             newExpr = modifyAtPathInExpr pathToExprContainingSelection modify id expr
-            newLocationHistory = push (exprName, pathToExprContainingSelection) locationHistory
             pathToExprContainingSelection = dropPatternPartOfPath expr selectionPath
         addAlternativeToSelected = maybe (continue appState) modifyDef (addAlternativeAtPath selectionPath expr)
         deleteSelected = modifyDef $ replaceSelected E.Hole P.Wildcard
-        modifyDef newExpr = liftIO (createAppState (Map.insert exprName newExpr defs) wrappingStyle clipboard locationHistory) >>= continue
+        modifyDef newExpr = liftIO (updateDerivedState appState { defs = Map.insert exprName newExpr defs }) >>= continue
         switchToNextWrappingStyle = switchWrappingStyle $ if wrappingStyle == maxBound then minBound else succ wrappingStyle
         switchToPrevWrappingStyle = switchWrappingStyle $ if wrappingStyle == minBound then maxBound else pred wrappingStyle
         switchWrappingStyle newWrappingStyle = continue $ appState { wrappingStyle = newWrappingStyle }
