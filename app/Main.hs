@@ -36,7 +36,7 @@ import qualified Type as T
 import qualified Value as V
 
 data AppState = AppState
-    { _defs :: Defs
+    { _defHistories :: Map.Map E.ExprName (History E.Expr)
     , _wrappingStyle :: WrappingStyle
     , _clipboard :: Clipboard
     , _locationHistory :: History Location
@@ -53,7 +53,6 @@ data DerivedState = DerivedState
     }
 data AppResourceName = EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
-type Defs = Map.Map E.ExprName E.Expr
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
 type Location = (E.ExprName, E.Path)
 data EditState = EditState (Editor String AppResourceName) (Maybe AutocompleteState)
@@ -76,21 +75,22 @@ main :: IO AppState
 main = createInitialState >>= defaultMain app
 
 createInitialState :: IO AppState
-createInitialState = AppState defs NoParens clipboard locationHistory Nothing <$> createDerivedState defs location where
+createInitialState = AppState defHistories NoParens clipboard locationHistory Nothing <$> createDerivedState defs location where
+    defHistories = Map.map create defs
     defs = Defs.defs
     clipboard = Clipboard Nothing Nothing
     locationHistory = History.create location
     location = ("main", [])
 
-createDerivedState :: Defs -> Location -> IO DerivedState
+createDerivedState :: Map.Map E.ExprName E.Expr -> Location -> IO DerivedState
 createDerivedState defs location@(exprName, _) =
     DerivedState (createInferResult defs exprName) <$> createEvalResult defs location
 
-createInferResult :: Defs -> E.ExprName -> InferResult
+createInferResult :: Map.Map E.ExprName E.Expr -> E.ExprName -> InferResult
 createInferResult defs exprName = inferType constructorTypes defs expr where
     expr = fromJust $ Map.lookup exprName defs
 
-createEvalResult :: Defs -> Location -> IO EvalResult
+createEvalResult :: Map.Map E.ExprName E.Expr -> Location -> IO EvalResult
 createEvalResult defs (exprName, selectionPath) = do
     let expr = fromJust $ Map.lookup exprName defs
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
@@ -106,12 +106,12 @@ createEvalResult defs (exprName, selectionPath) = do
 
 updateDerivedState :: AppState -> IO AppState
 updateDerivedState appState = do
-    newDerivedState <- createDerivedState (view defs appState) (present $ view locationHistory appState)
+    newDerivedState <- createDerivedState (present <$> view defHistories appState) (present $ view locationHistory appState)
     return $ appState & derivedState .~ newDerivedState
 
 updateEvalResult :: AppState -> IO AppState
 updateEvalResult appState = do
-    newEvalResult <- createEvalResult (view defs appState) (present $ view locationHistory appState)
+    newEvalResult <- createEvalResult (present <$> view defHistories appState) (present $ view locationHistory appState)
     return $ appState & derivedState . evalResult .~ newEvalResult
 
 app :: App AppState e AppResourceName
@@ -123,7 +123,7 @@ app = App
     , appAttrMap = const $ attrMap Vty.defAttr [] }
 
 draw :: AppState -> [AppWidget]
-draw (AppState defs wrappingStyle _ locationHistory maybeEditState (DerivedState inferResult evalResult)) = ui where
+draw (AppState defHistories wrappingStyle _ locationHistory maybeEditState (DerivedState inferResult evalResult)) = ui where
     ui = case maybeEditState of
         Just (EditState _ (Just (AutocompleteState autocompleteList editorExtent))) | autocompleteListLength > 0 ->
             [ translateBy autocompleteOffset autocomplete, layout ] where
@@ -138,7 +138,7 @@ draw (AppState defs wrappingStyle _ locationHistory maybeEditState (DerivedState
     coloredExpr = modifyDefAttr (flip Vty.withForeColor gray) renderedExpr -- unselected parts of the expression are gray
     gray = Vty.rgbColor 128 128 128 -- this shade seems to work well on both light and dark backgrounds
     (exprName, selectionPath) = present locationHistory
-    expr = fromJust $ Map.lookup exprName defs
+    expr = present $ fromJust $ Map.lookup exprName defHistories
     (_, renderedExpr) = renderWithAttrs wrappingStyle maybeEditState (ContainsSelection selectionPath) maybeTypeError (renderExpr expr)
     maybeTypeError = case inferResult of
         TypeError typeError -> Just typeError
@@ -341,10 +341,13 @@ handleEvent appState (VtyEvent event) = case view editState appState of
         Vty.EvKey Vty.KBackTab [] -> switchToPrevWrappingStyle
         Vty.EvKey (Vty.KChar 'c') [] -> copy
         Vty.EvKey (Vty.KChar 'p') [] -> paste
+        Vty.EvKey (Vty.KChar 'u') [] -> undo
+        Vty.EvKey (Vty.KChar 'r') [] -> redo
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     where
-        currentDefs = view defs appState
+        currentDefHistories = view defHistories appState
+        currentDefs = Map.map present currentDefHistories
         currentClipboard = view clipboard appState
         currentLocationHistory = view locationHistory appState
         (exprName, selectionPath) = present currentLocationHistory
@@ -397,7 +400,7 @@ handleEvent appState (VtyEvent event) = case view editState appState of
         wrapSelectedInFn = modifyExprContainingSelection $ \expr -> E.Fn (pure (P.Wildcard, expr))
         modifyExprContainingSelection modify = liftIO createNewAppState >>= continue where
             createNewAppState = updateDerivedState $ appState
-                & defs %~ Map.insert exprName newExpr
+                & defHistories . ix exprName %~ push newExpr
                 & locationHistory %~ push (exprName, pathToExprContainingSelection)
                 & editState .~ Nothing
             newExpr = modifyAtPathInExpr pathToExprContainingSelection modify id expr
@@ -406,7 +409,7 @@ handleEvent appState (VtyEvent event) = case view editState appState of
         deleteSelected = modifyDef $ replaceSelected E.Hole P.Wildcard
         modifyDef newExpr = liftIO createNewAppState >>= continue where
             createNewAppState = updateDerivedState $ appState
-                & defs %~ Map.insert exprName newExpr
+                & defHistories . ix exprName %~ push newExpr
                 & editState .~ Nothing
         switchToNextWrappingStyle = modifyWrappingStyle getNext
         switchToPrevWrappingStyle = modifyWrappingStyle getPrev
@@ -418,6 +421,8 @@ handleEvent appState (VtyEvent event) = case view editState appState of
             Pattern p -> clipboardPattern .~ Just p
         paste = modifyDef $ modifySelected (maybe id const exprClipboard) (maybe id const patternClipboard)
         Clipboard exprClipboard patternClipboard = currentClipboard
+        undo = liftIO (updateDerivedState $ appState & defHistories . ix exprName %~ goBack) >>= continue
+        redo = liftIO (updateDerivedState $ appState & defHistories . ix exprName %~ goForward) >>= continue
 
 printAutocompleteItem :: Selectable -> String
 printAutocompleteItem item = case item of
