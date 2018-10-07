@@ -392,18 +392,22 @@ handleEvent appState (VtyEvent event) = case view editState appState of
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern expr
         setEditState newEditState = continue $ appState & editState .~ newEditState
-        callSelected = modifySelectedExpr $ \expr -> E.Call expr E.Hole
-        applyFnToSelected = modifySelectedExpr $ E.Call E.Hole
-        wrapSelectedInFn = modifySelectedExpr $ \expr -> E.Fn (pure (P.Wildcard, expr))
-        modifySelectedExpr modify = liftIO createNewAppState >>= continue where
+        callSelected = modifyExprContainingSelection $ \expr -> E.Call expr E.Hole
+        applyFnToSelected = modifyExprContainingSelection $ E.Call E.Hole
+        wrapSelectedInFn = modifyExprContainingSelection $ \expr -> E.Fn (pure (P.Wildcard, expr))
+        modifyExprContainingSelection modify = liftIO createNewAppState >>= continue where
             createNewAppState = updateDerivedState $ appState
                 & defs %~ Map.insert exprName newExpr
                 & locationHistory %~ push (exprName, pathToExprContainingSelection)
+                & editState .~ Nothing
             newExpr = modifyAtPathInExpr pathToExprContainingSelection modify id expr
             pathToExprContainingSelection = dropPatternPartOfPath expr selectionPath
         addAlternativeToSelected = maybe (continue appState) modifyDef (addAlternativeAtPath selectionPath expr)
         deleteSelected = modifyDef $ replaceSelected E.Hole P.Wildcard
-        modifyDef newExpr = liftIO (updateDerivedState $ appState & defs %~ Map.insert exprName newExpr) >>= continue
+        modifyDef newExpr = liftIO createNewAppState >>= continue where
+            createNewAppState = updateDerivedState $ appState
+                & defs %~ Map.insert exprName newExpr
+                & editState .~ Nothing
         switchToNextWrappingStyle = modifyWrappingStyle getNext
         switchToPrevWrappingStyle = modifyWrappingStyle getPrev
         modifyWrappingStyle modify = continue $ appState & wrappingStyle %~ modify
