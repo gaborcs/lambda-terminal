@@ -25,7 +25,7 @@ dependencies:
 - containers
 - deepseq
 - hspec
-- microlens-platform
+- lens
 - mtl
 - text-zipper
 - vector
