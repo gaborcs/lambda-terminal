@@ -158,7 +158,7 @@ drawDefView (AppState defs _ wrappingStyle _ editState (Just (DerivedState infer
         _ -> [ layout ]
     layout = renderedTitle <=> viewport Viewport Both coloredExpr <=> str bottomStr
     renderedTitle = case editState of
-        Renaming editor -> renderEditor (str . head) True editor
+        Renaming editor -> str "Rename to: " <+> renderEditor (str . head) True editor
         _ -> renderTitle defName
     (defName, defHistory) = fromJust $ Map.lookup defId defs
     coloredExpr = modifyDefAttr (flip Vty.withForeColor gray) renderedExpr -- unselected parts of the expression are gray
