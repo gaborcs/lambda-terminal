@@ -1,5 +1,9 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module Infer where
 
+import Control.Lens
+import Control.Lens.Extras
 import Control.Monad.State
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
@@ -20,6 +24,8 @@ data TypedIntermediateTree = TypedIntermediateTree T.Type [TypeEqualityConstrain
 type TypeEqualityConstraint = (T.Type, T.Type)
 type Substitution = Map.Map T.VarId T.Type
 data InfiniteType = InfiniteType
+
+makePrisms ''InferResult
 
 inferType :: Ord d => Map.Map E.ConstructorName T.Type -> Map.Map d (E.Expr d) -> E.Expr d -> InferResult
 inferType constructorTypes defs expr = solve intermediateTree where
@@ -141,10 +147,7 @@ solve' initialSubst tree = (finalSubst, inferResult) where
     inferResult = case (maybeType, maybeTypeTrees) of
         (Just t, Just typeTrees) | not hasConstraintError -> Typed $ TypeTree t typeTrees
         _ -> TypeError childInferResults
-    maybeTypeTrees = traverse getTypeTree childInferResults
-    getTypeTree inferResult = case inferResult of
-        Typed typeTree -> Just typeTree
-        _ -> Nothing
+    maybeTypeTrees = traverse (preview _Typed) childInferResults
     childInferResults = reverse reversedChildInferResults
 
 compose :: Substitution -> Substitution -> Substitution
@@ -193,9 +196,4 @@ applyToTypeTree :: Substitution -> TypeTree -> TypeTree
 applyToTypeTree subst (TypeTree t children) = TypeTree (apply subst t) (applyToTypeTree subst <$> children)
 
 hasErrorAtRoot :: TypeError -> Bool
-hasErrorAtRoot = all isTyped
-
-isTyped :: InferResult -> Bool
-isTyped inferResult = case inferResult of
-    Typed _ -> True
-    _ -> False
+hasErrorAtRoot = all $ is _Typed

@@ -78,6 +78,7 @@ makeLenses ''AppState
 makeLenses ''Clipboard
 makeLenses ''DerivedState
 makePrisms ''Location
+makePrisms ''Selectable
 
 main :: IO AppState
 main = defaultMain app initialState
@@ -114,9 +115,7 @@ createEvalResult :: Map.Map DefId Expr -> DefViewLocation -> IO EvalResult
 createEvalResult defs (exprName, selectionPath) = do
     let expr = fromJust $ Map.lookup exprName defs
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
-    let maybeSelectedExpr = case selected of
-            Expr expr -> Just expr
-            _ -> Nothing
+    let maybeSelectedExpr = preview _Expr selected
     let maybeSelectionValue = maybeSelectedExpr >>= eval defs
     timeoutResult <- timeout 10000 $ evaluate $ force maybeSelectionValue
     return $ case timeoutResult of
@@ -165,9 +164,7 @@ drawDefView (AppState defs _ wrappingStyle _ editState (Just (DerivedState infer
     expr = view present defHistory
     (_, renderedExpr) = renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError (renderExpr defNames expr)
     defNames = Map.map fst defs
-    maybeTypeError = case inferResult of
-        TypeError typeError -> Just typeError
-        _ -> Nothing
+    maybeTypeError = preview _TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
         Just t -> evalStr ++ ": " ++ prettyPrintType t
@@ -272,9 +269,7 @@ getChildSelection selection index = case selection of
     NoSelection -> NoSelection
 
 getChildTypeError :: Maybe TypeError -> E.ChildIndex -> Maybe TypeError
-getChildTypeError maybeTypeError index = case childResult of
-    Just (TypeError childError) -> Just childError
-    _ -> Nothing
+getChildTypeError maybeTypeError index = childResult >>= preview _TypeError
     where childResult = (!! index) <$> maybeTypeError
 
 getTypeAtPathInInferResult :: E.Path -> InferResult -> Maybe T.Type
@@ -314,7 +309,7 @@ getChildInExpr expr index = case (expr, index) of
 
 getChildInPattern :: P.Pattern -> E.ChildIndex -> Maybe Selectable
 getChildInPattern pattern index = case pattern of
-    P.Constructor name patterns -> Pattern <$> getItemAtIndex index patterns
+    P.Constructor _ patterns -> Pattern <$> getItemAtIndex index patterns
     _ -> Nothing
 
 handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
