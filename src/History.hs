@@ -1,19 +1,21 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module History where
 
+import Control.Lens
+
 data History a = History
-    { past :: [a] -- from nearest to furthest from the present
-    , present :: a
-    , future :: [a] -- from nearest to furthest from the present
+    { _past :: [a] -- from nearest to furthest from the present
+    , _present :: a
+    , _future :: [a] -- from nearest to furthest from the present
     }
+makeLenses ''History
 
 create :: a -> History a
 create present = History [] present []
 
 push :: a -> History a -> History a
 push newPresent (History past present _) = History (present:past) newPresent []
-
-replacePresent :: a -> History a -> History a
-replacePresent newPresent history = history { present = newPresent }
 
 goBack :: History a -> History a
 goBack history@(History past present future) = case past of

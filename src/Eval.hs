@@ -9,13 +9,13 @@ import qualified Pattern as P
 import qualified Primitive
 import qualified Value as V
 
-eval :: Map.Map E.ExprName E.Expr -> E.Expr -> Maybe V.Value
+eval :: Ord d => Map.Map d (E.Expr d) -> E.Expr d -> Maybe V.Value
 eval = eval' Map.empty
 
-eval' :: V.Env -> Map.Map E.ExprName E.Expr -> E.Expr -> Maybe V.Value
+eval' :: Ord d => V.Env -> Map.Map d (E.Expr d) -> (E.Expr d) -> Maybe V.Value
 eval' env defs expr = case expr of
     E.Hole -> Nothing
-    E.Ref ref -> Map.lookup ref defs >>= eval' env defs
+    E.Def defId -> Map.lookup defId defs >>= eval' env defs
     E.Var var -> join $ Map.lookup var env
     E.Fn alternatives -> Just $ V.Fn $ evalPatternMatching (NonEmpty.toList alternatives) where
         evalPatternMatching alternatives maybeArgVal = case alternatives of
@@ -34,7 +34,7 @@ eval' env defs expr = case expr of
     E.Int n -> Just $ V.Int n
     E.Primitive p -> Just $ Primitive.getValue p
 
-match :: Maybe V.Value -> P.Pattern -> Maybe (Map.Map E.ExprName (Maybe V.Value))
+match :: Maybe V.Value -> P.Pattern -> Maybe (Map.Map E.VarName (Maybe V.Value))
 match maybeValue pattern = case pattern of
     P.Wildcard -> Just Map.empty
     P.Var var -> Just $ Map.singleton var maybeValue -- maybeValue is not evaluated (yet) in this case

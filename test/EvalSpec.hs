@@ -13,18 +13,18 @@ spec :: Spec
 spec = it "evaluates expressions" $ do
     E.Int 1 `evaluatesToInt` 1
     E.Int 2 `evaluatesToInt` 2
-    E.Call (E.Ref "id") (E.Int 1) `evaluatesToInt` 1
-    E.Call (E.Ref "constOne") (E.Int 2) `evaluatesToInt` 1
-    E.Call (E.Call (E.Ref "const") (E.Int 1)) (E.Int 2) `evaluatesToInt` 1
-    E.Call (E.Ref "inc") (E.Int 2) `evaluatesToInt` 3
-    E.Call (E.Ref "boolToInt") (E.Constructor "False") `evaluatesToInt` 0
-    E.Call (E.Ref "boolToInt") (E.Constructor "True") `evaluatesToInt` 1
-    E.Call (E.Ref "intToBool") (E.Int 0) `evaluatesToBool` False
-    E.Call (E.Ref "intToBool") (E.Int 1) `evaluatesToBool` True
-    E.Call (E.Call (E.Ref "fromMaybe") (E.Int 0)) (E.Constructor "Nothing") `evaluatesToInt` 0
-    E.Call (E.Call (E.Ref "fromMaybe") (E.Int 0)) (E.Call (E.Constructor "Just") (E.Int 1)) `evaluatesToInt` 1
+    E.Call (E.Def "id") (E.Int 1) `evaluatesToInt` 1
+    E.Call (E.Def "constOne") (E.Int 2) `evaluatesToInt` 1
+    E.Call (E.Call (E.Def "const") (E.Int 1)) (E.Int 2) `evaluatesToInt` 1
+    E.Call (E.Def "inc") (E.Int 2) `evaluatesToInt` 3
+    E.Call (E.Def "boolToInt") (E.Constructor "False") `evaluatesToInt` 0
+    E.Call (E.Def "boolToInt") (E.Constructor "True") `evaluatesToInt` 1
+    E.Call (E.Def "intToBool") (E.Int 0) `evaluatesToBool` False
+    E.Call (E.Def "intToBool") (E.Int 1) `evaluatesToBool` True
+    E.Call (E.Call (E.Def "fromMaybe") (E.Int 0)) (E.Constructor "Nothing") `evaluatesToInt` 0
+    E.Call (E.Call (E.Def "fromMaybe") (E.Int 0)) (E.Call (E.Constructor "Just") (E.Int 1)) `evaluatesToInt` 1
 
-defs :: Map.Map E.ExprName E.Expr
+defs :: Map.Map String (E.Expr String)
 defs = Map.fromList
     [ ("id", E.fn "x" $ E.Var "x")
     , ("constOne", E.fn "x" $ E.Int 1)
@@ -34,12 +34,12 @@ defs = Map.fromList
     , ("intToBool", E.Fn ((P.Int 0, E.Constructor "False") NonEmpty.:| [(P.Wildcard, E.Constructor "True")]))
     , ("fromMaybe", E.fn "default" (E.Fn ((P.Constructor "Just" [P.Var "x"], E.Var "x") NonEmpty.:| [(P.Constructor "Nothing" [], E.Var "default")]))) ]
 
-evaluatesToInt :: E.Expr -> Int -> Expectation
+evaluatesToInt :: E.Expr String -> Int -> Expectation
 evaluatesToInt expr val = case eval defs expr of
     Just (V.Int n) -> n `shouldBe` val
     _ -> expectationFailure $ show expr ++ " should evaluate to Int " ++ show val
 
-evaluatesToBool :: E.Expr -> Bool -> Expectation
+evaluatesToBool :: E.Expr String -> Bool -> Expectation
 evaluatesToBool expr val = case eval defs expr of
     Just (V.Constructor name []) -> name `shouldBe` if val then "True" else "False"
     _ -> expectationFailure $ show expr ++ " should evaluate to " ++ show val
