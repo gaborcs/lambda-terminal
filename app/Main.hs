@@ -54,7 +54,6 @@ data DerivedState = DerivedState
 type DefId = Int
 type DefName = String
 type Expr = E.Expr DefId
-type Alternative = E.Alternative DefId
 data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
@@ -108,12 +107,12 @@ createDerivedState defs location@(exprName, _) =
     DerivedState (createInferResult defs exprName) <$> createEvalResult defs location
 
 createInferResult :: Map.Map DefId Expr -> DefId -> InferResult
-createInferResult defs exprName = inferType constructorTypes defs expr where
-    expr = fromJust $ Map.lookup exprName defs
+createInferResult defs defId = inferType constructorTypes defs expr where
+    expr = fromJust $ Map.lookup defId defs
 
 createEvalResult :: Map.Map DefId Expr -> DefViewLocation -> IO EvalResult
-createEvalResult defs (exprName, selectionPath) = do
-    let expr = fromJust $ Map.lookup exprName defs
+createEvalResult defs (defId, selectionPath) = do
+    let expr = fromJust $ Map.lookup defId defs
     let selected = fromJust $ getItemAtPathInExpr selectionPath expr
     let maybeSelectedExpr = preview _Expr selected
     let maybeSelectionValue = maybeSelectedExpr >>= eval defs
@@ -201,7 +200,7 @@ renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case
         (renderResultType, widget) = renderer wrappingStyle $ RenderChild renderChild
         renderChild index = renderWithAttrs wrappingStyle editState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
 
-renderExpr :: Map.Map DefId DefName -> Expr -> Renderer
+renderExpr :: Ord d => Map.Map d DefName -> E.Expr d -> Renderer
 renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
     E.Hole -> (OneWord, str "_")
     E.Def defId -> (OneWord, str $ fromMaybe "missing" $ Map.lookup defId defNames)
@@ -235,7 +234,7 @@ renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
 withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
-renderAlternative :: Map.Map DefId DefName -> RenderChild -> Int -> Alternative -> RenderResult
+renderAlternative :: Ord d => Map.Map d DefName -> RenderChild -> Int -> E.Alternative d -> RenderResult
 renderAlternative defNames (RenderChild renderChild) alternativeIndex (pattern, expr) =
     if exprResultType == MultiLine
     then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
