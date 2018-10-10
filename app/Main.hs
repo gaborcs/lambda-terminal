@@ -325,6 +325,7 @@ handleEventOnDefListView appState event selectedDefId = case event of
     Vty.EvKey Vty.KDown [] -> select $ fromMaybe selectedDefId maybeNextDefId
     Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
     Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
+    Vty.EvKey (Vty.KChar 'n') [] -> addNewDef
     Vty.EvKey (Vty.KChar 'q') [] -> halt appState
     _ -> continue appState
     where
@@ -333,6 +334,11 @@ handleEventOnDefListView appState event selectedDefId = case event of
         maybeNextDefId = fmap (+ 1) maybeSelectedIndex >>= flip getItemAtIndex defIds
         maybeSelectedIndex = elemIndex selectedDefId defIds
         defIds = Map.keys $ view defs appState
+        addNewDef = liftIO createNewAppState >>= continue where
+            createNewAppState = updateDerivedState $ appState
+                & defs %~ Map.insert newDefId (Nothing, History.create E.Hole)
+                & locationHistory %~ (push (DefView (newDefId, []))) . (present .~ DefListView newDefId)
+            newDefId = last defIds + 1
 
 handleEventOnDefView :: AppState -> Vty.Event -> DefViewLocation -> EventM AppResourceName (Next AppState)
 handleEventOnDefView appState event (defId, selectionPath) = case currentEditState of
