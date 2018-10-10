@@ -36,7 +36,7 @@ import qualified Type as T
 import qualified Value as V
 
 data AppState = AppState
-    { _defs :: Map.Map DefId (DefName, History Expr)
+    { _defs :: Map.Map DefId (Maybe DefName, History Expr)
     , _locationHistory :: History Location
     , _wrappingStyle :: WrappingStyle
     , _clipboard :: Clipboard
@@ -60,7 +60,7 @@ data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Boun
 data Location = DefListView SelectedDefId | DefView DefViewLocation
 type SelectedDefId = DefId
 type DefViewLocation = (DefId, E.Path)
-data EditState = NotEditing | Renaming EditorState | SelectionEditing EditorState (Maybe AutocompleteState)
+data EditState = NotEditing | Naming EditorState | SelectionEditing EditorState (Maybe AutocompleteState)
 type EditorState = Editor String AppResourceName
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
 type AutocompleteList = ListWidget.List AppResourceName Selectable
@@ -84,7 +84,7 @@ main = defaultMain app initialState
 
 initialState :: AppState
 initialState = AppState defs locationHistory NoParens clipboard NotEditing Nothing where
-    defs = fmap History.create <$> Defs.defs
+    defs = (\(name, expr) -> (Just name, History.create expr)) <$> Defs.defs
     clipboard = Clipboard Nothing Nothing
     locationHistory = History.create $ DefListView 0
 
@@ -138,7 +138,8 @@ draw appState = case view present $ view locationHistory appState of
 drawDefListView :: AppState -> SelectedDefId -> [AppWidget]
 drawDefListView appState selectedDefId = [ renderTitle "Definitions" <=> renderedList ] where
     renderedList = vBox $ renderItem <$> Map.toAscList (view defs appState)
-    renderItem (id, (name, _)) = if id == selectedDefId then str name else modifyDefAttr (flip Vty.withForeColor gray) (str name)
+    renderItem (defId, (maybeName, _)) = grayIf (defId /= selectedDefId) (str $ fromMaybe "unnamed" maybeName)
+    grayIf cond = if cond then modifyDefAttr $ flip Vty.withForeColor gray else id
 
 gray :: Vty.Color
 gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark backgrounds
@@ -156,13 +157,14 @@ drawDefView (AppState defs _ wrappingStyle _ editState (Just (DerivedState infer
         _ -> [ layout ]
     layout = renderedTitle <=> viewport Viewport Both coloredExpr <=> str bottomStr
     renderedTitle = case editState of
-        Renaming editor -> str "Rename to: " <+> renderEditor (str . head) True editor
-        _ -> renderTitle defName
-    (defName, defHistory) = fromJust $ Map.lookup defId defs
+        Naming editor -> prompt <+> renderEditor (str . head) True editor where
+            prompt = str $ if isJust maybeDefName then "Rename to: " else "Name to: "
+        _ -> renderTitle $ fromMaybe "unnamed" maybeDefName
+    (maybeDefName, defHistory) = fromJust $ Map.lookup defId defs
     coloredExpr = modifyDefAttr (flip Vty.withForeColor gray) renderedExpr -- unselected parts of the expression are gray
     expr = view present defHistory
     (_, renderedExpr) = renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError (renderExpr defNames expr)
-    defNames = Map.map fst defs
+    defNames = Map.map fromJust $ Map.filter isJust $ Map.map fst defs
     maybeTypeError = preview _TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
@@ -334,13 +336,13 @@ handleEventOnDefListView appState event selectedDefId = case event of
 
 handleEventOnDefView :: AppState -> Vty.Event -> DefViewLocation -> EventM AppResourceName (Next AppState)
 handleEventOnDefView appState event (defId, selectionPath) = case currentEditState of
-    Renaming editor -> case event of
+    Naming editor -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit
-        Vty.EvKey Vty.KEnter [] -> commitRename $ head $ getEditContents editor
-        Vty.EvKey (Vty.KChar ' ') [] -> commitRename $ head $ getEditContents editor
+        Vty.EvKey Vty.KEnter [] -> commitName $ head $ getEditContents editor
+        Vty.EvKey (Vty.KChar ' ') [] -> commitName $ head $ getEditContents editor
         _ -> do
             newEditor <- handleEditorEvent event editor
-            continue $ appState & editState .~ Renaming newEditor
+            continue $ appState & editState .~ Naming newEditor
     SelectionEditing editor maybeAutocompleteState -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit
         Vty.EvKey Vty.KEnter [] -> maybe (continue appState) commitAutocompleteSelection maybeAutocompleteState
@@ -399,15 +401,15 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
     where
         currentDefs = view defs appState
         defIds = Map.keys currentDefs
-        defNames = Map.map fst currentDefs
-        (defName, defHistory) = fromJust $ Map.lookup defId currentDefs
+        defNames = Map.map fromJust $ Map.filter isJust $ Map.map fst currentDefs
+        (maybeDefName, defHistory) = fromJust $ Map.lookup defId currentDefs
         defExpr = view present defHistory
         currentClipboard = view clipboard appState
         currentEditState = view editState appState
-        initiateRename = setEditState $ Renaming initialRenameEditor
-        initialRenameEditor = applyEdit gotoEOL $ editor EditorName (Just 1) defName
-        commitRename newName = continue $ appState
-            & defs . ix defId . _1 .~ newName
+        initiateRename = setEditState $ Naming initialRenameEditor
+        initialRenameEditor = applyEdit gotoEOL $ editor EditorName (Just 1) $ fromMaybe "" maybeDefName
+        commitName newName = continue $ appState
+            & defs . ix defId . _1 .~ (if null newName then Nothing else Just newName)
             & editState .~ NotEditing
         navToParent = nav parentPath
         navToChild = nav pathToFirstChildOfSelected
@@ -491,7 +493,7 @@ modifyLocationHistory modify appState = liftIO (updateDerivedState $ appState & 
 
 printAutocompleteItem :: Map.Map DefId DefName -> Selectable -> String
 printAutocompleteItem defNames item = case item of
-    Expr (E.Def id) -> fromMaybe "missing" $ Map.lookup id defNames
+    Expr (E.Def id) -> fromMaybe "unnamed" $ Map.lookup id defNames
     Expr (E.Var name) -> name
     Expr (E.Constructor name) -> name
     Expr (E.Int n) -> show n
