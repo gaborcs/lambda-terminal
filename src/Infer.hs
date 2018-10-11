@@ -26,6 +26,7 @@ type Substitution = Map.Map T.VarId T.Type
 data InfiniteType = InfiniteType
 
 makePrisms ''InferResult
+makePrisms ''IntermediateTree
 
 inferType :: Ord d => Map.Map E.ConstructorName T.Type -> Map.Map d (E.Expr d) -> E.Expr d -> InferResult
 inferType constructorTypes defs expr = solve intermediateTree where
@@ -83,10 +84,6 @@ infer instantiateConstructorType defs env expr = case expr of
     E.Int _ -> return $ TypedIntermediate $ TypedIntermediateTree T.Int [] []
     E.Primitive p -> return $ TypedIntermediate $ TypedIntermediateTree (Primitive.getType p) [] []
 
-getTypedIntermediate :: IntermediateTree -> Maybe TypedIntermediateTree
-getTypedIntermediate (TypedIntermediate tree) = Just tree
-getTypedIntermediate _ = Nothing
-
 inferAlternative :: Ord d => (E.ConstructorName -> Maybe (Infer T.Type)) -> Map.Map d (Either T.Type (E.Expr d)) -> TypeEnv -> E.Alternative d -> Infer (IntermediateTree, IntermediateTree)
 inferAlternative instantiateConstructorType defs env (pattern, expr) = do
     (patternTree, patternTypeEnv) <- inferPattern instantiateConstructorType pattern
@@ -106,7 +103,7 @@ inferPattern instantiateConstructorType pattern = case pattern of
         let childTrees = fst <$> childResults
         let childTypeEnvs = snd <$> childResults
         let typeEnv = mconcat childTypeEnvs
-        case (instantiateConstructorType name, traverse getTypedIntermediate childTrees) of
+        case (instantiateConstructorType name, traverse (preview _TypedIntermediate) childTrees) of
             (Just getConstructorType, Just typedChildTrees) -> do
                 let childTypes = (\(TypedIntermediateTree t _ _) -> t) <$> typedChildTrees
                 tv <- freshTVar
