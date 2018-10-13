@@ -6,15 +6,15 @@ import qualified Pattern as P
 
 type VarName = P.VarName
 type ConstructorName = P.ConstructorName
-type PatternMatching d = NonEmpty.NonEmpty (Alternative d)
-type Alternative d = (P.Pattern, Expr d)
+type PatternMatching defId = NonEmpty.NonEmpty (Alternative defId)
+type Alternative defId = (P.Pattern, Expr defId)
 
-data Expr d -- d is the type of definition identifiers
+data Expr defId
     = Hole
-    | Def d
+    | Def defId
     | Var VarName
-    | Fn (PatternMatching d)
-    | Call (Expr d) (Expr d)
+    | Fn (PatternMatching defId)
+    | Call (Expr defId) (Expr defId)
     | Constructor ConstructorName
     | Int Int
     | Primitive Primitive
