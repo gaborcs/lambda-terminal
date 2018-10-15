@@ -104,40 +104,6 @@ replaceDefKeys keyToId expr = case expr of
     E.Int n -> E.Int n
     E.Primitive p -> E.Primitive p
 
-updateDerivedState :: AppState -> IO AppState
-updateDerivedState appState = do
-    let defExprs = view present . snd <$> view defs appState
-    let location = view present $ view locationHistory appState
-    newDerivedState <- traverse (createDerivedState defExprs) (preview _DefView location)
-    return $ appState & derivedState .~ newDerivedState
-
-updateEvalResult :: AppState -> IO AppState
-updateEvalResult appState = do
-    let defExprs = view present . snd <$> view defs appState
-    let location = view present $ view locationHistory appState
-    newEvalResult <- traverse (createEvalResult defExprs) (preview _DefView location)
-    return $ appState & derivedState . _Just . evalResult %~ flip fromMaybe newEvalResult
-
-createDerivedState :: Map.Map DefId Expr -> DefViewLocation -> IO DerivedState
-createDerivedState defs location@(exprName, _) =
-    DerivedState (createInferResult defs exprName) <$> createEvalResult defs location
-
-createInferResult :: Map.Map DefId Expr -> DefId -> InferResult
-createInferResult defs defId = inferType constructorTypes defs expr where
-    expr = fromJust $ Map.lookup defId defs
-
-createEvalResult :: Map.Map DefId Expr -> DefViewLocation -> IO EvalResult
-createEvalResult defs (defId, selectionPath) = do
-    let expr = fromJust $ Map.lookup defId defs
-    let selected = fromJust $ getItemAtPathInExpr selectionPath expr
-    let maybeSelectedExpr = preview _Expr selected
-    let maybeSelectionValue = maybeSelectedExpr >>= eval defs
-    timeoutResult <- timeout 10000 $ evaluate $ force maybeSelectionValue
-    return $ case timeoutResult of
-        Just (Just v) -> Value v
-        Just Nothing -> Error
-        Nothing -> Timeout
-
 app :: App AppState e AppResourceName
 app = App
     { appDraw = draw
@@ -590,3 +556,37 @@ addAlternativeAtPath selectionPath expr = case (expr, selectionPath) of
     (E.Call callee arg, 0:restOfPath) -> E.Call <$> addAlternativeAtPath restOfPath callee <*> pure arg
     (E.Call callee arg, 1:restOfPath) -> E.Call callee <$> addAlternativeAtPath restOfPath arg
     _ -> Nothing
+
+updateDerivedState :: AppState -> IO AppState
+updateDerivedState appState = do
+    let defExprs = view present . snd <$> view defs appState
+    let location = view present $ view locationHistory appState
+    newDerivedState <- traverse (createDerivedState defExprs) (preview _DefView location)
+    return $ appState & derivedState .~ newDerivedState
+
+updateEvalResult :: AppState -> IO AppState
+updateEvalResult appState = do
+    let defExprs = view present . snd <$> view defs appState
+    let location = view present $ view locationHistory appState
+    newEvalResult <- traverse (createEvalResult defExprs) (preview _DefView location)
+    return $ appState & derivedState . _Just . evalResult %~ flip fromMaybe newEvalResult
+
+createDerivedState :: Map.Map DefId Expr -> DefViewLocation -> IO DerivedState
+createDerivedState defs location@(exprName, _) =
+    DerivedState (createInferResult defs exprName) <$> createEvalResult defs location
+
+createInferResult :: Map.Map DefId Expr -> DefId -> InferResult
+createInferResult defs defId = inferType constructorTypes defs expr where
+    expr = fromJust $ Map.lookup defId defs
+
+createEvalResult :: Map.Map DefId Expr -> DefViewLocation -> IO EvalResult
+createEvalResult defs (defId, selectionPath) = do
+    let expr = fromJust $ Map.lookup defId defs
+    let selected = fromJust $ getItemAtPathInExpr selectionPath expr
+    let maybeSelectedExpr = preview _Expr selected
+    let maybeSelectionValue = maybeSelectedExpr >>= eval defs
+    timeoutResult <- timeout 10000 $ evaluate $ force maybeSelectionValue
+    return $ case timeoutResult of
+        Just (Just v) -> Value v
+        Just Nothing -> Error
+        Nothing -> Timeout
