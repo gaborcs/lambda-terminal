@@ -6,13 +6,12 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Expr as E
 import qualified Pattern as P
-import qualified Primitive
 import qualified Value as V
 
-eval :: Ord d => Map.Map d (E.Expr d) -> E.Expr d -> Maybe V.Value
+eval :: (Ord d, E.Primitive p) => Map.Map d (E.Expr d p) -> E.Expr d p -> Maybe V.Value
 eval = eval' Map.empty
 
-eval' :: Ord d => V.Env -> Map.Map d (E.Expr d) -> (E.Expr d) -> Maybe V.Value
+eval' :: (Ord d, E.Primitive p) => V.Env -> Map.Map d (E.Expr d p) -> (E.Expr d p) -> Maybe V.Value
 eval' env defs expr = case expr of
     E.Hole -> Nothing
     E.Def defId -> Map.lookup defId defs >>= eval' env defs
@@ -32,7 +31,7 @@ eval' env defs expr = case expr of
             _ -> Nothing
     E.Constructor name -> Just $ V.Constructor name []
     E.Int n -> Just $ V.Int n
-    E.Primitive p -> Just $ Primitive.getValue p
+    E.Primitive p -> Just $ E.getValue p
 
 match :: Maybe V.Value -> P.Pattern -> Maybe (Map.Map E.VarName (Maybe V.Value))
 match maybeValue pattern = case pattern of

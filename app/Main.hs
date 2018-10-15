@@ -28,10 +28,10 @@ import qualified Data.Vector as Vec
 import qualified Brick.Types
 import qualified Brick.Widgets.List as ListWidget
 import qualified Graphics.Vty as Vty
+import qualified BuiltIns
 import qualified Defs
 import qualified Expr as E
 import qualified Pattern as P
-import qualified Primitive
 import qualified Type as T
 import qualified Value as V
 
@@ -53,7 +53,7 @@ data DerivedState = DerivedState
     }
 type DefId = Int
 type DefName = String
-type Expr = E.Expr DefId
+type Expr = E.Expr DefId BuiltIns.Primitive
 data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
@@ -93,7 +93,7 @@ initialDefs = Map.mapKeys keyToId $ Map.map f Defs.defs where
     keyToId key = Map.findWithDefault (-1) key keyToIdMap
     keyToIdMap = Map.fromList $ zip (Map.keys Defs.defs) [0..]
 
-replaceDefKeys :: (k -> DefId) -> E.Expr k -> Expr
+replaceDefKeys :: (d -> DefId) -> E.Expr d p -> E.Expr DefId p
 replaceDefKeys keyToId expr = case expr of
     E.Hole -> E.Hole
     E.Def key -> E.Def $ keyToId key
@@ -218,7 +218,7 @@ renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case
         (renderResultType, widget) = renderer wrappingStyle $ RenderChild renderChild
         renderChild index = renderWithAttrs wrappingStyle editState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
 
-renderExpr :: Ord d => Map.Map d DefName -> E.Expr d -> Renderer
+renderExpr :: (Ord d, E.Primitive p) => Map.Map d DefName -> E.Expr d p -> Renderer
 renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
     E.Hole -> (OneWord, str "_")
     E.Def defId -> (OneWord, str $ fromMaybe "missing" $ Map.lookup defId defNames)
@@ -247,12 +247,12 @@ renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
             (argResultType, renderedArg) = renderChild 1 (renderExpr defNames arg)
     E.Constructor name -> (OneWord, str name)
     E.Int n -> (OneWord, str $ show n)
-    E.Primitive p -> (OneWord, str $ Primitive.getDisplayName p)
+    E.Primitive p -> (OneWord, str $ E.getDisplayName p)
 
 withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
-renderAlternative :: Ord d => Map.Map d DefName -> RenderChild -> Int -> E.Alternative d -> RenderResult
+renderAlternative :: (Ord d, E.Primitive p) => Map.Map d DefName -> RenderChild -> Int -> E.Alternative d p -> RenderResult
 renderAlternative defNames (RenderChild renderChild) alternativeIndex (pattern, expr) =
     if exprResultType == MultiLine
     then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
@@ -519,7 +519,7 @@ printAutocompleteItem defNames item = case item of
     Expr (E.Var name) -> name
     Expr (E.Constructor name) -> name
     Expr (E.Int n) -> show n
-    Expr (E.Primitive p) -> Primitive.getDisplayName p
+    Expr (E.Primitive p) -> E.getDisplayName p
     Pattern (P.Var name) -> name
     Pattern (P.Constructor name _) -> name
     Pattern (P.Int n) -> show n
@@ -533,7 +533,7 @@ arity :: T.Type -> Int
 arity (T.Fn _ resultType) = 1 + arity resultType
 arity _ = 0
 
-getVarsAtPath :: E.Path -> E.Expr d -> [E.VarName]
+getVarsAtPath :: E.Path -> E.Expr d p -> [E.VarName]
 getVarsAtPath path expr = case path of
     [] -> []
     edge:restOfPath -> case expr of
@@ -548,7 +548,7 @@ getVars (P.Var name) = [name]
 getVars (P.Constructor _ children) = children >>= getVars
 getVars _ = []
 
-modifyAtPathInExpr :: E.Path -> (E.Expr d -> E.Expr d) -> (P.Pattern -> P.Pattern) -> E.Expr d -> E.Expr d
+modifyAtPathInExpr :: E.Path -> (E.Expr d p -> E.Expr d p) -> (P.Pattern -> P.Pattern) -> E.Expr d p -> E.Expr d p
 modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
     [] -> modifyExpr expr
     edge:restOfPath -> case expr of
@@ -570,7 +570,7 @@ modifyAtPathInPattern path modify pattern = case path of
         P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (modifyAtPathInPattern restOfPath modify) children
         _ -> error "invalid path"
 
-dropPatternPartOfPath :: E.Expr d -> E.Path -> E.Path
+dropPatternPartOfPath :: E.Expr d p -> E.Path -> E.Path
 dropPatternPartOfPath expr path = case path of
     [] -> []
     edge:restOfPath -> case expr of
@@ -579,7 +579,7 @@ dropPatternPartOfPath expr path = case path of
         E.Call callee arg | edge == 1 -> 1 : dropPatternPartOfPath arg restOfPath
         _ -> error "invalid path"
 
-addAlternativeAtPath :: E.Path -> E.Expr d -> Maybe (E.Expr d)
+addAlternativeAtPath :: E.Path -> E.Expr d p -> Maybe (E.Expr d p)
 addAlternativeAtPath selectionPath expr = case (expr, selectionPath) of
     (E.Fn alts, edge:restOfPath) | odd edge -> case addAlternativeAtPath restOfPath (snd $ alts NonEmpty.!! altIndex) of
         Just expr -> Just $ E.Fn $ modifyItemAtIndexInNonEmpty altIndex modifyAlt alts where

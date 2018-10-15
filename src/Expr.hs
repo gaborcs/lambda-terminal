@@ -1,27 +1,33 @@
 module Expr where
 
-import Primitive
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Pattern as P
+import qualified Type as T
+import qualified Value as V
 
 type VarName = P.VarName
 type ConstructorName = P.ConstructorName
-type PatternMatching defId = NonEmpty.NonEmpty (Alternative defId)
-type Alternative defId = (P.Pattern, Expr defId)
+type PatternMatching defId primitive = NonEmpty.NonEmpty (Alternative defId primitive)
+type Alternative defId primitive = (P.Pattern, Expr defId primitive)
 
-data Expr defId
+class Primitive p where
+    getDisplayName :: p -> String
+    getType :: p -> T.Type
+    getValue :: p -> V.Value
+
+data Expr defId primitive
     = Hole
     | Def defId
     | Var VarName
-    | Fn (PatternMatching defId)
-    | Call (Expr defId) (Expr defId)
+    | Fn (PatternMatching defId primitive)
+    | Call (Expr defId primitive) (Expr defId primitive)
     | Constructor ConstructorName
     | Int Int
-    | Primitive Primitive
+    | Primitive primitive
     deriving (Eq, Show)
 
 -- shortcut for creating functions with a single alternative
-fn :: VarName -> Expr d -> Expr d
+fn :: VarName -> Expr d p -> Expr d p
 fn var body = Fn $ pure (P.Var var, body)
 
 type Path = [ChildIndex]

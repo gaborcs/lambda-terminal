@@ -10,7 +10,6 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Expr as E
 import qualified Pattern as P
-import qualified Primitive
 import qualified Type as T
 
 data InferResult = Typed TypeTree | TypeError TypeError deriving Show
@@ -28,12 +27,21 @@ data InfiniteType = InfiniteType
 makePrisms ''InferResult
 makePrisms ''IntermediateTree
 
-inferType :: Ord d => Map.Map E.ConstructorName T.Type -> Map.Map d (E.Expr d) -> E.Expr d -> InferResult
+inferType :: (Ord d, E.Primitive p)
+    => Map.Map E.ConstructorName T.Type
+    -> Map.Map d (E.Expr d p)
+    -> E.Expr d p
+    -> InferResult
 inferType constructorTypes defs expr = solve intermediateTree where
     intermediateTree = evalState (infer instantiateConstructorType (Map.map Right defs) Map.empty expr) 0
     instantiateConstructorType name = instantiate <$> Map.lookup name constructorTypes
 
-infer :: Ord d => (E.ConstructorName -> Maybe (Infer T.Type)) -> Map.Map d (Either T.Type (E.Expr d)) -> TypeEnv -> E.Expr d -> Infer IntermediateTree
+infer :: (Ord d, E.Primitive p)
+    => (E.ConstructorName -> Maybe (Infer T.Type))
+    -> Map.Map d (Either T.Type (E.Expr d p))
+    -> TypeEnv
+    -> E.Expr d p
+    -> Infer IntermediateTree
 infer instantiateConstructorType defs env expr = case expr of
     E.Hole -> TypedIntermediate <$> (TypedIntermediateTree <$> freshTVar <*> pure [] <*> pure [])
     E.Def defId -> case Map.lookup defId defs of
@@ -82,9 +90,14 @@ infer instantiateConstructorType defs env expr = case expr of
                 return $ TypedIntermediate $ TypedIntermediateTree t [] []
             Nothing -> return $ UntypedIntermediate []
     E.Int _ -> return $ TypedIntermediate $ TypedIntermediateTree T.Int [] []
-    E.Primitive p -> return $ TypedIntermediate $ TypedIntermediateTree (Primitive.getType p) [] []
+    E.Primitive p -> return $ TypedIntermediate $ TypedIntermediateTree (E.getType p) [] []
 
-inferAlternative :: Ord d => (E.ConstructorName -> Maybe (Infer T.Type)) -> Map.Map d (Either T.Type (E.Expr d)) -> TypeEnv -> E.Alternative d -> Infer (IntermediateTree, IntermediateTree)
+inferAlternative :: (Ord d, E.Primitive p)
+    => (E.ConstructorName -> Maybe (Infer T.Type))
+    -> Map.Map d (Either T.Type (E.Expr d p))
+    -> TypeEnv
+    -> E.Alternative d p
+    -> Infer (IntermediateTree, IntermediateTree)
 inferAlternative instantiateConstructorType defs env (pattern, expr) = do
     (patternTree, patternTypeEnv) <- inferPattern instantiateConstructorType pattern
     exprTree <- infer instantiateConstructorType defs (Map.union patternTypeEnv env) expr
