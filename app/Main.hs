@@ -83,10 +83,26 @@ main :: IO AppState
 main = defaultMain app initialState
 
 initialState :: AppState
-initialState = AppState defs locationHistory NoParens clipboard NotEditing Nothing where
-    defs = (\(name, expr) -> (Just name, History.create expr)) <$> Defs.defs
+initialState = AppState initialDefs locationHistory NoParens clipboard NotEditing Nothing where
     clipboard = Clipboard Nothing Nothing
     locationHistory = History.create $ DefListView 0
+
+initialDefs :: Map.Map DefId (Maybe DefName, History Expr)
+initialDefs = Map.mapKeys keyToId $ Map.map f Defs.defs where
+    f (name, expr) = (Just name, History.create $ replaceDefKeys keyToId expr)
+    keyToId key = Map.findWithDefault (-1) key keyToIdMap
+    keyToIdMap = Map.fromList $ zip (Map.keys Defs.defs) [0..]
+
+replaceDefKeys :: (k -> DefId) -> E.Expr k -> Expr
+replaceDefKeys keyToId expr = case expr of
+    E.Hole -> E.Hole
+    E.Def key -> E.Def $ keyToId key
+    E.Var v -> E.Var v
+    E.Fn alts -> E.Fn $ fmap (replaceDefKeys keyToId) <$> alts
+    E.Call callee arg -> E.Call (replaceDefKeys keyToId callee) (replaceDefKeys keyToId arg)
+    E.Constructor n -> E.Constructor n
+    E.Int n -> E.Int n
+    E.Primitive p -> E.Primitive p
 
 updateDerivedState :: AppState -> IO AppState
 updateDerivedState appState = do
