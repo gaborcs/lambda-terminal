@@ -1,4 +1,4 @@
-module BuiltIns where
+module BuiltInPrimitives where
 
 import qualified Expr as E
 import qualified Type as T

@@ -28,7 +28,7 @@ import qualified Data.Vector as Vec
 import qualified Brick.Types
 import qualified Brick.Widgets.List as ListWidget
 import qualified Graphics.Vty as Vty
-import qualified BuiltIns
+import qualified BuiltInPrimitives
 import qualified Defs
 import qualified Expr as E
 import qualified Pattern as P
@@ -53,7 +53,7 @@ data DerivedState = DerivedState
     }
 type DefId = Int
 type DefName = String
-type Expr = E.Expr DefId BuiltIns.Primitive
+type Expr = E.Expr DefId BuiltInPrimitives.Primitive
 data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)

@@ -5,7 +5,7 @@ import Infer
 import Util
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
-import qualified BuiltIns
+import qualified BuiltInPrimitives
 import qualified Expr as E
 import qualified Pattern as P
 import qualified Type as T
@@ -28,7 +28,7 @@ spec = do
             T.Fn (T.Fn (T.Var 0) (T.Var 1)) (T.Fn (T.Fn (T.Var 2) (T.Var 0)) (T.Fn (T.Var 2) (T.Var 1)))
         E.Def "diverge" `hasType` T.Var 0
         E.Def "divergeFn" `hasType` T.Fn T.Int (T.Var 0)
-        E.Primitive BuiltIns.Plus `hasType` T.Fn T.Int (T.Fn T.Int T.Int)
+        E.Primitive BuiltInPrimitives.Plus `hasType` T.Fn T.Int (T.Fn T.Int T.Int)
         E.Def "inc" `hasType` T.Fn T.Int T.Int
         E.Call (E.Def "inc") (E.Int 1) `hasType` T.Int
         E.Constructor "Nothing" `hasType` T.Constructor "Maybe" [T.Var 0]
@@ -47,17 +47,17 @@ constructorTypes = Map.fromList
     , ("Nothing", T.Constructor "Maybe" [T.Var 0])
     , ("Just", T.Fn (T.Var 0) (T.Constructor "Maybe" [T.Var 0])) ]
 
-defs :: Map.Map String (E.Expr String BuiltIns.Primitive)
+defs :: Map.Map String (E.Expr String BuiltInPrimitives.Primitive)
 defs = Map.fromList
     [ ("constOne", E.fn "x" $ E.Int 1)
     , ("id", E.fn "x" $ E.Var "x")
     , ("const", E.fn "x" . E.fn "y" $ E.Var "x")
-    , ("inc", E.Call (E.Primitive BuiltIns.Plus) $ E.Int 1)
+    , ("inc", E.Call (E.Primitive BuiltInPrimitives.Plus) $ E.Int 1)
     , ("diverge", E.Def "diverge")
     , ("divergeFn", E.fn "n" $ E.Call (E.Def "divergeFn") (E.Int 1))
     , ("intToBool", E.Fn ((P.Int 0, E.Constructor "False") NonEmpty.:| [(P.Wildcard, E.Constructor "True")])) ]
 
-hasType :: E.Expr String BuiltIns.Primitive -> T.Type -> Expectation
+hasType :: E.Expr String BuiltInPrimitives.Primitive -> T.Type -> Expectation
 hasType expr expectedType = case inferType constructorTypes defs expr of
     Typed (TypeTree actualType _) -> indexTVarsFromZero actualType `shouldBe` expectedType
     _ -> expectationFailure $ "type error for: " ++ show expr
@@ -65,7 +65,7 @@ hasType expr expectedType = case inferType constructorTypes defs expr of
 indexTVarsFromZero :: T.Type -> T.Type
 indexTVarsFromZero t = apply (Map.fromList $ zip (typeVars t) (T.Var <$> [0..])) t
 
-failsAtPath :: E.Expr String BuiltIns.Primitive -> E.Path -> Expectation
+failsAtPath :: E.Expr String BuiltInPrimitives.Primitive -> E.Path -> Expectation
 failsAtPath expr path = inferType constructorTypes defs expr `hasErrorAtPath` path
 
 hasErrorAtPath :: InferResult -> E.Path -> Expectation

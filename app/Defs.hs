@@ -2,7 +2,7 @@ module Defs where
 
 import Data.List.NonEmpty
 import Expr
-import BuiltIns
+import BuiltInPrimitives
 import qualified Data.Map as Map
 import qualified Pattern as P
 
@@ -16,7 +16,7 @@ data DefKey
     | IncrementD
     deriving (Eq, Ord)
 
-defs :: Map.Map DefKey (String, Expr DefKey BuiltIns.Primitive)
+defs :: Map.Map DefKey (String, Expr DefKey BuiltInPrimitives.Primitive)
 defs = Map.fromList
     [ (IfD, ("if", fn "condition" $ fn "thenExpr" $ fn "elseExpr" $
         Call (Fn $ (P.Constructor "True" [], Var "thenExpr") :| [(P.Constructor "False" [], Var "elseExpr")]) (Var "condition")))
