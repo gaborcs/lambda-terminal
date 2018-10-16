@@ -12,7 +12,7 @@ data DefKey
     | FactorialD
     | FibonacciSeqD
     | FibonacciSeqFromD
-    | InfListTakeD
+    | TakeD
     | ConstD
     | IncrementD
     deriving (Eq, Ord)
@@ -32,10 +32,10 @@ defs = Map.fromList
     , (FibonacciSeqFromD, ("fibonacciSeqFrom", fn "a" $ fn "b" $
         Call (Call (Constructor (BT.ConstructorKey BT.InfList "Cons")) (Var "a"))
             (Call (Call (Def FibonacciSeqFromD) (Var "b")) (Call (Call (Primitive Plus) (Var "a")) (Var "b")))))
-    , (InfListTakeD, ("InfList.take", fn "n" $ Fn $ pure (P.Constructor (BT.ConstructorKey BT.InfList "Cons") [P.Var "x", P.Var "xs"],
+    , (TakeD, ("take", fn "n" $ Fn $ pure (P.Constructor (BT.ConstructorKey BT.InfList "Cons") [P.Var "x", P.Var "xs"],
         Call (Call (Call (Def IfD) (Call (Call (Primitive Equals) (Var "n")) (Int 0))) (Constructor (BT.ConstructorKey BT.List "[]")))
         (Call (Call (Constructor (BT.ConstructorKey BT.List "Cons")) (Var "x"))
-        (Call (Call (Def InfListTakeD) (Call (Call (Primitive Minus) (Var "n")) (Int 1))) (Var "xs"))))))
+        (Call (Call (Def TakeD) (Call (Call (Primitive Minus) (Var "n")) (Int 1))) (Var "xs"))))))
     , (ConstD, ("const", fn "x" . Fn $ pure (P.Wildcard, Var "x")))
     , (IncrementD, ("increment", Call (Primitive Plus) $ Int 1))
     ]
