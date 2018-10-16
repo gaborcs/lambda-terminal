@@ -27,6 +27,7 @@ dependencies:
 - hspec
 - lens
 - mtl
+- safe
 - text-zipper
 - vector
 - vty

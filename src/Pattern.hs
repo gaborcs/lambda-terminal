@@ -3,9 +3,9 @@ module Pattern where
 type VarName = String
 type ConstructorName = String
 
-data Pattern
+data Pattern constructorKey
     = Wildcard
     | Var VarName
-    | Constructor ConstructorName [Pattern]
+    | Constructor constructorKey [Pattern constructorKey]
     | Int Int
     deriving (Eq, Show)

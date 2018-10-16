@@ -12,8 +12,8 @@ spec = it "prints values" $ do
     constructor "Just" [constructor "True" []] `prints` "Just True"
     constructor "Just" [constructor "Just" [V.Int 1]] `prints` "Just (Just 1)"
 
-prints :: V.Value -> String -> Expectation
-prints v s = prettyPrintValue v `shouldBe` Just s
+prints :: V.Value String -> String -> Expectation
+prints v s = prettyPrintValue id v `shouldBe` Just s
 
-constructor :: E.ConstructorName -> [V.Value] -> V.Value
+constructor :: String -> [V.Value String] -> V.Value String
 constructor name values = V.Constructor name $ fmap Just values

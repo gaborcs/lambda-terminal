@@ -15,22 +15,23 @@ import Text.Read
 import Brick hiding (Location)
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
+import Safe
 import Eval
 import History
-import Infer
 import PrettyPrintType
 import PrettyPrintValue
 import Util
-import ConstructorTypes
 import qualified Data.Map as Map
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Vector as Vec
 import qualified Brick.Types
 import qualified Brick.Widgets.List as ListWidget
 import qualified Graphics.Vty as Vty
-import qualified BuiltInPrimitives
+import qualified BuiltInPrimitives as BP
+import qualified BuiltInTypes as BT
 import qualified Defs
 import qualified Expr as E
+import qualified Infer
 import qualified Pattern as P
 import qualified Type as T
 import qualified Value as V
@@ -45,7 +46,7 @@ data AppState = AppState
     }
 data Clipboard = Clipboard
     { _clipboardExpr :: Maybe Expr
-    , _clipboardPattern :: Maybe P.Pattern
+    , _clipboardPattern :: Maybe Pattern
     }
 data DerivedState = DerivedState
     { _inferResult :: InferResult
@@ -53,7 +54,14 @@ data DerivedState = DerivedState
     }
 type DefId = Int
 type DefName = String
-type Expr = E.Expr DefId BuiltInPrimitives.Primitive
+type Expr = E.Expr DefId BT.ConstructorKey BP.Primitive
+type Alternative = E.Alternative DefId BT.ConstructorKey BP.Primitive
+type Pattern = P.Pattern BT.ConstructorKey
+type Type = T.Type BT.TypeDefKey
+type Value = V.Value BT.ConstructorKey
+type InferResult = Infer.InferResult BT.TypeDefKey
+type TypeTree = Infer.TypeTree BT.TypeDefKey
+type TypeError = Infer.TypeError BT.TypeDefKey
 data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
@@ -65,8 +73,8 @@ type EditorState = Editor String AppResourceName
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
 type AutocompleteList = ListWidget.List AppResourceName Selectable
 type EditorExtent = Extent AppResourceName
-data EvalResult = Timeout | Error | Value V.Value
-data Selectable = Expr Expr | Pattern P.Pattern
+data EvalResult = Timeout | Error | Value Value
+data Selectable = Expr Expr | Pattern Pattern
 newtype RenderChild = RenderChild (E.ChildIndex -> Renderer -> RenderResult)
 type Renderer = WrappingStyle -> RenderChild -> RenderResult
 type RenderResult = (RenderResultType, AppWidget)
@@ -93,7 +101,7 @@ initialDefs = Map.mapKeys keyToId $ Map.map f Defs.defs where
     keyToId key = Map.findWithDefault (-1) key keyToIdMap
     keyToIdMap = Map.fromList $ zip (Map.keys Defs.defs) [0..]
 
-replaceDefKeys :: (d -> DefId) -> E.Expr d p -> E.Expr DefId p
+replaceDefKeys :: (d -> DefId) -> E.Expr d c p -> E.Expr DefId c p
 replaceDefKeys keyToId expr = case expr of
     E.Hole -> E.Hole
     E.Def key -> E.Def $ keyToId key
@@ -142,20 +150,20 @@ drawDefView (AppState defs _ wrappingStyle _ editState (Just (DerivedState infer
         Naming editor -> prompt <+> renderEditor (str . head) True editor where
             prompt = str $ if isJust maybeDefName then "Rename to: " else "Name to: "
         _ -> renderTitle $ fromMaybe "unnamed" maybeDefName
-    (maybeDefName, defHistory) = fromJust $ Map.lookup defId defs
+    (maybeDefName, defHistory) = defs Map.! defId
     coloredExpr = modifyDefAttr (flip Vty.withForeColor gray) renderedExpr -- unselected parts of the expression are gray
     expr = view present defHistory
     (_, renderedExpr) = renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError (renderExpr defNames expr)
-    defNames = Map.map fromJust $ Map.filter isJust $ Map.map fst defs
-    maybeTypeError = preview _TypeError inferResult
+    defNames = Map.mapMaybe fst defs
+    maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
-        Just t -> evalStr ++ ": " ++ prettyPrintType t
+        Just t -> evalStr ++ ": " ++ prettyPrintType (view BT.name . BT.getTypeDef) t
         Nothing -> "Type error"
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
         Error -> ""
-        Value v -> fromMaybe "" $ prettyPrintValue v
+        Value v -> fromMaybe "" $ prettyPrintValue (view BT.constructorName) v
 
 renderTitle :: String -> Widget n
 renderTitle title = hBorderWithLabel $ str $ "  " ++ title ++ "  "
@@ -179,12 +187,12 @@ renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case
         selected = selection == ContainsSelection []
         withinSelection = selection == WithinSelection
         makeRedIfNeeded = if hasError && (selected || withinSelection) then makeRed else id
-        hasError = maybe False hasErrorAtRoot maybeTypeError
+        hasError = maybe False Infer.hasErrorAtRoot maybeTypeError
         makeRed = modifyDefAttr $ flip Vty.withForeColor Vty.red
         (renderResultType, widget) = renderer wrappingStyle $ RenderChild renderChild
         renderChild index = renderWithAttrs wrappingStyle editState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
 
-renderExpr :: (Ord d, E.Primitive p) => Map.Map d DefName -> E.Expr d p -> Renderer
+renderExpr :: Map.Map DefId DefName -> Expr -> Renderer
 renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
     E.Hole -> (OneWord, str "_")
     E.Def defId -> (OneWord, str $ fromMaybe "missing" $ Map.lookup defId defNames)
@@ -211,14 +219,14 @@ renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
         where
             (calleeResultType, renderedCallee) = renderChild 0 (renderExpr defNames callee)
             (argResultType, renderedArg) = renderChild 1 (renderExpr defNames arg)
-    E.Constructor name -> (OneWord, str name)
+    E.Constructor key -> (OneWord, str $ view BT.constructorName key)
     E.Int n -> (OneWord, str $ show n)
     E.Primitive p -> (OneWord, str $ E.getDisplayName p)
 
 withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
-renderAlternative :: (Ord d, E.Primitive p) => Map.Map d DefName -> RenderChild -> Int -> E.Alternative d p -> RenderResult
+renderAlternative :: Map.Map DefId DefName -> RenderChild -> Int -> Alternative -> RenderResult
 renderAlternative defNames (RenderChild renderChild) alternativeIndex (pattern, expr) =
     if exprResultType == MultiLine
     then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
@@ -227,12 +235,13 @@ renderAlternative defNames (RenderChild renderChild) alternativeIndex (pattern, 
         (_, renderedPattern) = renderChild (2 * alternativeIndex) $ renderPattern pattern
         (exprResultType, renderedExpr) = renderChild (2 * alternativeIndex + 1) $ renderExpr defNames expr
 
-renderPattern :: P.Pattern -> Renderer
+renderPattern :: Pattern -> Renderer
 renderPattern pattern wrappingStyle (RenderChild renderChild) = case pattern of
     P.Wildcard -> (OneWord, str "_")
     P.Var var -> (OneWord, str var)
-    P.Constructor name children -> (resultType, hBox $ intersperse (str " ") (str name : renderedChildren)) where
+    P.Constructor key children -> (resultType, hBox $ intersperse (str " ") (str name : renderedChildren)) where
         resultType = if null children then OneWord else OneLine
+        name = view BT.constructorName key
         renderedChildren = addParensIfNeeded <$> zipWith renderChild [0..] childRenderers
         addParensIfNeeded (resultType, renderedChild) = withParensIf (resultType /= OneWord) renderedChild
         childRenderers = renderPattern <$> children
@@ -252,18 +261,18 @@ getChildSelection selection index = case selection of
     NoSelection -> NoSelection
 
 getChildTypeError :: Maybe TypeError -> E.ChildIndex -> Maybe TypeError
-getChildTypeError maybeTypeError index = childResult >>= preview _TypeError
+getChildTypeError maybeTypeError index = childResult >>= preview Infer._TypeError
     where childResult = (!! index) <$> maybeTypeError
 
-getTypeAtPathInInferResult :: E.Path -> InferResult -> Maybe T.Type
+getTypeAtPathInInferResult :: E.Path -> InferResult -> Maybe Type
 getTypeAtPathInInferResult path inferResult = case inferResult of
-    Typed typeTree -> getTypeAtPathInTypeTree path typeTree
-    TypeError childResults -> case path of
+    Infer.Typed typeTree -> getTypeAtPathInTypeTree path typeTree
+    Infer.TypeError childResults -> case path of
         [] -> Nothing
         index:restOfPath -> getTypeAtPathInInferResult restOfPath $ childResults !! index
 
-getTypeAtPathInTypeTree :: E.Path -> TypeTree -> Maybe T.Type
-getTypeAtPathInTypeTree path (TypeTree t children) = case path of
+getTypeAtPathInTypeTree :: E.Path -> TypeTree -> Maybe Type
+getTypeAtPathInTypeTree path (Infer.TypeTree t children) = case path of
     [] -> Just t
     index:restOfPath -> getTypeAtPathInTypeTree restOfPath $ children !! index
 
@@ -290,7 +299,7 @@ getChildInExpr expr index = case (expr, index) of
     (E.Call _ arg, 1) -> Just $ Expr arg
     _ -> Nothing
 
-getChildInPattern :: P.Pattern -> E.ChildIndex -> Maybe Selectable
+getChildInPattern :: Pattern -> E.ChildIndex -> Maybe Selectable
 getChildInPattern pattern index = case pattern of
     P.Constructor _ patterns -> Pattern <$> getItemAtIndex index patterns
     _ -> Nothing
@@ -353,8 +362,13 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
                             vars = E.Var <$> getVarsAtPath selectionPath defExpr
                             primitives = E.Primitive <$> [minBound..]
                             defs = E.Def <$> defIds
-                            constructors = E.Constructor <$> Map.keys constructorTypes
-                        Pattern _ -> map Pattern $ uncurry createConstructorPattern <$> Map.toList constructorTypes
+                            constructors = E.Constructor <$> constructorKeys
+                            constructorKeys = BT.typeDefKeys >>= getConstructorKeys
+                            getConstructorKeys typeDefKey = BT.ConstructorKey typeDefKey <$> getConstructorNames typeDefKey
+                            getConstructorNames typeDefKey = fst <$> getConstructors typeDefKey
+                            getConstructors = view BT.constructors . BT.getTypeDef
+                        Pattern _ -> map Pattern constructorPatterns where
+                            constructorPatterns = BT.typeDefKeys >>= createConstructorPatterns
             maybeEditorExtent <- lookupExtent EditorName
             setEditState $ SelectionEditing newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
         where editorContent = head $ getEditContents editor
@@ -389,8 +403,8 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
     where
         currentDefs = view defs appState
         defIds = Map.keys currentDefs
-        defNames = Map.map fromJust $ Map.filter isJust $ Map.map fst currentDefs
-        (maybeDefName, defHistory) = fromJust $ Map.lookup defId currentDefs
+        defNames = Map.mapMaybe fst currentDefs
+        (maybeDefName, defHistory) = currentDefs Map.! defId
         defExpr = view present defHistory
         currentClipboard = view clipboard appState
         currentEditState = view editState appState
@@ -416,7 +430,7 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
             Just (Expr (E.Call _ _)) -> 2
             Just (Pattern (P.Constructor _ siblings)) -> length siblings
             _ -> 1
-        selected = fromJust $ getItemAtPath selectionPath
+        selected = fromJustNote "selection path should be a valid path" $ getItemAtPath selectionPath
         getItemAtPath path = getItemAtPathInExpr path defExpr
         goToDefinition = case selected of
             Expr (E.Def defId) | Map.member defId currentDefs -> goToDef defId appState
@@ -425,11 +439,9 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
         initialSelectionEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialSelectionEditorContent
         initialSelectionEditorContent = printAutocompleteItem defNames selected
         cancelEdit = setEditState NotEditing
-        commitEditorContent editorContent = modifyDef $ case Map.lookup editorContent constructorTypes of
-            Just constructorType -> replaceSelected (E.Constructor editorContent) (createConstructorPattern editorContent constructorType)
-            Nothing -> case readMaybe editorContent of
-                Just int -> replaceSelected (E.Int int) (P.Int int)
-                Nothing -> replaceSelected (E.Var editorContent) (P.Var editorContent)
+        commitEditorContent editorContent = modifyDef $ case readMaybe editorContent of
+            Just int -> replaceSelected (E.Int int) (P.Int int)
+            Nothing -> replaceSelected (E.Var editorContent) (P.Var editorContent)
         commitAutocompleteSelection (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
             Just (_, selectedItem) -> modifyDef $ case selectedItem of
                 Expr expr -> modifySelected (const expr) id
@@ -483,23 +495,23 @@ printAutocompleteItem :: Map.Map DefId DefName -> Selectable -> String
 printAutocompleteItem defNames item = case item of
     Expr (E.Def id) -> fromMaybe "unnamed" $ Map.lookup id defNames
     Expr (E.Var name) -> name
-    Expr (E.Constructor name) -> name
+    Expr (E.Constructor key) -> view BT.constructorName key
     Expr (E.Int n) -> show n
     Expr (E.Primitive p) -> E.getDisplayName p
     Pattern (P.Var name) -> name
-    Pattern (P.Constructor name _) -> name
+    Pattern (P.Constructor key _) -> view BT.constructorName key
     Pattern (P.Int n) -> show n
     _ -> ""
 
-createConstructorPattern :: E.ConstructorName -> T.Type -> P.Pattern
-createConstructorPattern name t = P.Constructor name wildcards where
-    wildcards = replicate (arity t) P.Wildcard
+createConstructorPatterns :: BT.TypeDefKey -> [Pattern]
+createConstructorPatterns typeDefKey = createPattern <$> constructors where
+    createPattern (constructorName, paramTypes) = P.Constructor constructorKey wildcards where
+        constructorKey = BT.ConstructorKey typeDefKey constructorName
+        wildcards = replicate arity P.Wildcard
+        arity = length paramTypes
+    constructors = view BT.constructors $ BT.getTypeDef typeDefKey
 
-arity :: T.Type -> Int
-arity (T.Fn _ resultType) = 1 + arity resultType
-arity _ = 0
-
-getVarsAtPath :: E.Path -> E.Expr d p -> [E.VarName]
+getVarsAtPath :: E.Path -> E.Expr d c p -> [E.VarName]
 getVarsAtPath path expr = case path of
     [] -> []
     edge:restOfPath -> case expr of
@@ -509,12 +521,12 @@ getVarsAtPath path expr = case path of
         E.Call _ arg | edge == 1 -> getVarsAtPath restOfPath arg
         _ -> error "invalid path"
 
-getVars :: P.Pattern -> [E.VarName]
+getVars :: P.Pattern c -> [E.VarName]
 getVars (P.Var name) = [name]
 getVars (P.Constructor _ children) = children >>= getVars
 getVars _ = []
 
-modifyAtPathInExpr :: E.Path -> (E.Expr d p -> E.Expr d p) -> (P.Pattern -> P.Pattern) -> E.Expr d p -> E.Expr d p
+modifyAtPathInExpr :: E.Path -> (E.Expr d c p -> E.Expr d c p) -> (P.Pattern c -> P.Pattern c) -> E.Expr d c p -> E.Expr d c p
 modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
     [] -> modifyExpr expr
     edge:restOfPath -> case expr of
@@ -529,14 +541,14 @@ modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
             E.Call callee (modifyAtPathInExpr restOfPath modifyExpr modifyPattern arg)
         _ -> error "invalid path"
 
-modifyAtPathInPattern :: E.Path -> (P.Pattern -> P.Pattern) -> P.Pattern -> P.Pattern
+modifyAtPathInPattern :: E.Path -> (P.Pattern t -> P.Pattern t) -> P.Pattern t -> P.Pattern t
 modifyAtPathInPattern path modify pattern = case path of
     [] -> modify pattern
     edge:restOfPath -> case pattern of
         P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (modifyAtPathInPattern restOfPath modify) children
         _ -> error "invalid path"
 
-dropPatternPartOfPath :: E.Expr d p -> E.Path -> E.Path
+dropPatternPartOfPath :: E.Expr d c p -> E.Path -> E.Path
 dropPatternPartOfPath expr path = case path of
     [] -> []
     edge:restOfPath -> case expr of
@@ -545,7 +557,7 @@ dropPatternPartOfPath expr path = case path of
         E.Call callee arg | edge == 1 -> 1 : dropPatternPartOfPath arg restOfPath
         _ -> error "invalid path"
 
-addAlternativeAtPath :: E.Path -> E.Expr d p -> Maybe (E.Expr d p)
+addAlternativeAtPath :: E.Path -> E.Expr d c p -> Maybe (E.Expr d c p)
 addAlternativeAtPath selectionPath expr = case (expr, selectionPath) of
     (E.Fn alts, edge:restOfPath) | odd edge -> case addAlternativeAtPath restOfPath (snd $ alts NonEmpty.!! altIndex) of
         Just expr -> Just $ E.Fn $ modifyItemAtIndexInNonEmpty altIndex modifyAlt alts where
@@ -576,14 +588,13 @@ createDerivedState defs location@(exprName, _) =
     DerivedState (createInferResult defs exprName) <$> createEvalResult defs location
 
 createInferResult :: Map.Map DefId Expr -> DefId -> InferResult
-createInferResult defs defId = inferType constructorTypes defs expr where
-    expr = fromJust $ Map.lookup defId defs
+createInferResult defs defId = Infer.inferType BT.getConstructorType defs $ defs Map.! defId
 
 createEvalResult :: Map.Map DefId Expr -> DefViewLocation -> IO EvalResult
 createEvalResult defs (defId, selectionPath) = do
-    let expr = fromJust $ Map.lookup defId defs
-    let selected = fromJust $ getItemAtPathInExpr selectionPath expr
-    let maybeSelectedExpr = preview _Expr selected
+    let maybeDef = Map.lookup defId defs
+    let maybeSelected = maybeDef >>= getItemAtPathInExpr selectionPath
+    let maybeSelectedExpr = maybeSelected >>= preview _Expr
     let maybeSelectionValue = maybeSelectedExpr >>= eval defs
     timeoutResult <- timeout 10000 $ evaluate $ force maybeSelectionValue
     return $ case timeoutResult of

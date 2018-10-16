@@ -2,20 +2,19 @@ module PrettyPrintValue (prettyPrintValue) where
 
 import qualified Value as V
 
-prettyPrintValue :: V.Value -> Maybe String
-prettyPrintValue value = case value of
+prettyPrintValue :: (c -> String) -> V.Value c -> Maybe String
+prettyPrintValue getName value = case value of
     V.Fn _ -> Nothing
-    V.Constructor name values -> do
+    V.Constructor key values -> do
         printedValues <- traverse (>>= withParensIf isComplex) values
-        return $ unwords $ name : printedValues
+        return $ unwords $ getName key : printedValues
     V.Int n -> Just $ show n
+    where
+        withParensIf pred v = do
+            s <- prettyPrintValue getName v
+            return $ if pred v then "(" ++ s ++ ")" else s
 
-withParensIf :: (V.Value -> Bool) -> V.Value -> Maybe String
-withParensIf pred v = do
-    s <- prettyPrintValue v
-    return $ if pred v then "(" ++ s ++ ")" else s
-
-isComplex :: V.Value -> Bool
+isComplex :: V.Value c -> Bool
 isComplex value = case value of
     V.Constructor _ values -> not $ null values
     _ -> False

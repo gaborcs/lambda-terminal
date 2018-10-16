@@ -2,9 +2,9 @@ module Type where
 
 type VarId = Int
 
-data Type
+data Type typeDefKey
     = Var VarId
-    | Fn Type Type
-    | Constructor String [Type]
+    | Fn (Type typeDefKey) (Type typeDefKey)
+    | Constructor typeDefKey [Type typeDefKey]
     | Int
     deriving (Eq, Show)

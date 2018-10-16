@@ -5,26 +5,25 @@ import qualified Type as T
 
 type IsComplex = Bool
 
-prettyPrintType :: T.Type -> String
-prettyPrintType t = case t of
+prettyPrintType :: (t -> String) -> T.Type t -> String
+prettyPrintType getName t = case t of
     T.Var varId -> typeVarNames !! varId
-    T.Fn paramType resultType -> withParensIf isFn paramType ++ " -> " ++ prettyPrintType resultType
-    T.Constructor name types -> unwords $ name : fmap (withParensIf isComplex) types
+    T.Fn paramType resultType -> withParensIf isFn paramType ++ " -> " ++ prettyPrintType getName resultType
+    T.Constructor typeDefKey types -> unwords $ getName typeDefKey : fmap (withParensIf isComplex) types
     T.Int -> "Int"
+    where
+        withParensIf pred t = if pred t then "(" ++ s ++ ")" else s where
+            s = prettyPrintType getName t
 
 typeVarNames :: [String]
 typeVarNames = [1..] >>= flip replicateM ['a'..'z']
 
-withParensIf :: (T.Type -> Bool) -> T.Type -> String
-withParensIf pred t = if pred t then "(" ++ s ++ ")" else s where
-    s = prettyPrintType t
-
-isFn :: T.Type -> Bool
+isFn :: T.Type t -> Bool
 isFn t = case t of
     T.Fn _ _ -> True
     _ -> False
 
-isComplex :: T.Type -> Bool
+isComplex :: T.Type t -> Bool
 isComplex t = case t of
     T.Var _ -> False
     T.Fn _ _ -> True

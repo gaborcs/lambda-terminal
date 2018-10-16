@@ -1,3 +1,5 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module Expr where
 
 import qualified Data.List.NonEmpty as NonEmpty
@@ -6,28 +8,29 @@ import qualified Type as T
 import qualified Value as V
 
 type VarName = P.VarName
-type ConstructorName = P.ConstructorName
-type PatternMatching defId primitive = NonEmpty.NonEmpty (Alternative defId primitive)
-type Alternative defId primitive = (P.Pattern, Expr defId primitive)
+type PatternMatching defKey constructorKey primitive = NonEmpty.NonEmpty (Alternative defKey constructorKey primitive)
+type Alternative defKey constructorKey primitive = (P.Pattern constructorKey, Expr defKey constructorKey primitive)
 
-class Primitive p where
+class PrimitiveName p where
     getDisplayName :: p -> String
-    getType :: p -> T.Type
-    getValue :: p -> V.Value
+class PrimitiveType p t where
+    getType :: p -> T.Type t
+class PrimitiveValue p c where
+    getValue :: p -> V.Value c
 
-data Expr defId primitive
+data Expr defKey constructorKey primitive
     = Hole
-    | Def defId
+    | Def defKey
     | Var VarName
-    | Fn (PatternMatching defId primitive)
-    | Call (Expr defId primitive) (Expr defId primitive)
-    | Constructor ConstructorName
+    | Fn (PatternMatching defKey constructorKey primitive)
+    | Call (Expr defKey constructorKey primitive) (Expr defKey constructorKey primitive)
+    | Constructor constructorKey
     | Int Int
     | Primitive primitive
     deriving (Eq, Show)
 
 -- shortcut for creating functions with a single alternative
-fn :: VarName -> Expr d p -> Expr d p
+fn :: VarName -> Expr d c p -> Expr d c p
 fn var body = Fn $ pure (P.Var var, body)
 
 type Path = [ChildIndex]

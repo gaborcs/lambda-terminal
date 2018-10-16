@@ -21,5 +21,5 @@ spec = it "prints types" $ do
     T.Constructor "Maybe" [T.Constructor "Bool" []] `prints` "Maybe Bool"
     T.Constructor "Maybe" [T.Constructor "Maybe" [T.Var 0]] `prints` "Maybe (Maybe a)"
 
-prints :: T.Type -> String -> Expectation
-prints = shouldBe . prettyPrintType
+prints :: T.Type String -> String -> Expectation
+prints = shouldBe . prettyPrintType id

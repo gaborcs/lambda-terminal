@@ -9,10 +9,10 @@ import qualified Data.Map as Map
 -- the result of evaluation is a Maybe value because the evaluation may fail
 -- passing around the Maybe values instead of the actual values allows us to keep them unevaluated until needed (lazy evaluation)
 
-type Env = Map.Map String (Maybe Value)
+type Env constructorKey = Map.Map String (Maybe (Value constructorKey))
 
-data Value
-    = Fn (Maybe Value -> Maybe Value)
-    | Constructor String [Maybe Value]
+data Value constructorKey
+    = Fn (Maybe (Value constructorKey) -> Maybe (Value constructorKey))
+    | Constructor constructorKey [Maybe (Value constructorKey)]
     | Int Int
     deriving (Generic, NFData)
