@@ -18,14 +18,13 @@ data TypeDefKey
 
 getTypeDef :: TypeDefKey -> TypeDef
 getTypeDef key = case key of
-    Bool -> TypeDef "Bool" [] [("False", []), ("True", [])]
-    Maybe -> TypeDef "Maybe" ["a"] [("Nothing", []), ("Just", [Var 0])]
-    List -> TypeDef "List" ["a"] [("[]", []), ("Cons", [Var 0, Constructor List [Var 0]])]
-    InfList -> TypeDef "InfList" ["a"] [("Cons", [Var 0, Constructor InfList [Var 0]])]
+    Bool -> TypeDef [] [("False", []), ("True", [])]
+    Maybe -> TypeDef ["a"] [("Nothing", []), ("Just", [Var 0])]
+    List -> TypeDef ["a"] [("[]", []), ("Cons", [Var 0, Constructor List [Var 0]])]
+    InfList -> TypeDef ["a"] [("Cons", [Var 0, Constructor InfList [Var 0]])]
 
 data TypeDef = TypeDef
-    { _name :: String
-    , _varNames :: [String]
+    { _varNames :: [String]
     , _constructors :: [ConstructorDef]
     }
 type ConstructorDef = (ConstructorName, [ParamType])
@@ -44,7 +43,7 @@ typeDefKeys = [minBound..]
 
 getConstructorType :: ConstructorKey -> Maybe (Type TypeDefKey)
 getConstructorType (ConstructorKey typeDefKey constructorName) = foldr Fn resultType <$> maybeParamTypes where
-    TypeDef _ typeVarNames constructors = getTypeDef typeDefKey
+    TypeDef typeVarNames constructors = getTypeDef typeDefKey
     resultType = Constructor typeDefKey typeVars
     typeVars = Var <$> [0 .. length typeVarNames - 1]
     maybeParamTypes = lookup constructorName constructors

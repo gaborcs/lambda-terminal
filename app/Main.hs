@@ -158,7 +158,7 @@ drawDefView (AppState defs _ wrappingStyle _ editState (Just (DerivedState infer
     maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
-        Just t -> evalStr ++ ": " ++ prettyPrintType (view BT.name . BT.getTypeDef) t
+        Just t -> evalStr ++ ": " ++ prettyPrintType show t
         Nothing -> "Type error"
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
