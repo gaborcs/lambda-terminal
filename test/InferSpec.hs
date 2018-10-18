@@ -32,16 +32,16 @@ spec = do
         E.Primitive BP.Plus `hasType` T.Fn T.Int (T.Fn T.Int T.Int)
         E.Def "inc" `hasType` T.Fn T.Int T.Int
         E.Call (E.Def "inc") (E.Int 1) `hasType` T.Int
-        E.Constructor (BT.ConstructorKey BT.Maybe "Nothing") `hasType` T.Constructor BT.Maybe [T.Var 0]
-        E.Constructor (BT.ConstructorKey BT.Maybe "Just") `hasType` T.Fn (T.Var 0) (T.Constructor BT.Maybe [T.Var 0])
-        E.Call (E.Constructor (BT.ConstructorKey BT.Maybe "Just")) (E.Int 1) `hasType` T.Constructor BT.Maybe [T.Int]
+        E.Constructor (T.DataConstructorKey BT.Maybe "Nothing") `hasType` T.Constructor BT.Maybe [T.Var 0]
+        E.Constructor (T.DataConstructorKey BT.Maybe "Just") `hasType` T.Fn (T.Var 0) (T.Constructor BT.Maybe [T.Var 0])
+        E.Call (E.Constructor (T.DataConstructorKey BT.Maybe "Just")) (E.Int 1) `hasType` T.Constructor BT.Maybe [T.Int]
         E.Def "intToBool" `hasType` T.Fn T.Int (T.Constructor BT.Bool [])
     it "indicates where type errors happen" $ do
         E.Call (E.Int 1) (E.Int 1) `failsAtPath` []
         E.fn "x" (E.Call (E.Int 1) (E.Int 1)) `failsAtPath` [1]
         E.Call (E.Def "inc") (E.Def "id") `failsAtPath` []
 
-defs :: Map.Map String (E.Expr String BT.ConstructorKey BP.Primitive)
+defs :: Map.Map String (E.Expr String BT.DataConstructorKey BP.Primitive)
 defs = Map.fromList
     [ ("constOne", E.fn "x" $ E.Int 1)
     , ("id", E.fn "x" $ E.Var "x")
@@ -49,20 +49,20 @@ defs = Map.fromList
     , ("inc", E.Call (E.Primitive BP.Plus) $ E.Int 1)
     , ("diverge", E.Def "diverge")
     , ("divergeFn", E.fn "n" $ E.Call (E.Def "divergeFn") (E.Int 1))
-    , ("intToBool", E.Fn ((P.Int 0, E.Constructor (BT.ConstructorKey BT.Bool "False")) NonEmpty.:|
-        [(P.Wildcard, E.Constructor (BT.ConstructorKey BT.Bool "True"))]))
+    , ("intToBool", E.Fn ((P.Int 0, E.Constructor (T.DataConstructorKey BT.Bool "False")) NonEmpty.:|
+        [(P.Wildcard, E.Constructor (T.DataConstructorKey BT.Bool "True"))]))
     ]
 
-hasType :: E.Expr String BT.ConstructorKey BP.Primitive -> T.Type BT.TypeDefKey -> Expectation
-hasType expr expectedType = case inferType BT.getConstructorType defs expr of
+hasType :: E.Expr String BT.DataConstructorKey BP.Primitive -> T.Type BT.TypeDefKey -> Expectation
+hasType expr expectedType = case inferType getConstructorType defs expr of
     Typed (TypeTree actualType _) -> indexTVarsFromZero actualType `shouldBe` expectedType
     _ -> expectationFailure $ "type error for: " ++ show expr
 
 indexTVarsFromZero :: T.Type t -> T.Type t
 indexTVarsFromZero t = apply (Map.fromList $ zip (typeVars t) (T.Var <$> [0..])) t
 
-failsAtPath :: E.Expr String BT.ConstructorKey BP.Primitive -> E.Path -> Expectation
-failsAtPath expr path = inferType BT.getConstructorType defs expr `hasErrorAtPath` path
+failsAtPath :: E.Expr String BT.DataConstructorKey BP.Primitive -> E.Path -> Expectation
+failsAtPath expr path = inferType getConstructorType defs expr `hasErrorAtPath` path
 
 hasErrorAtPath :: InferResult BT.TypeDefKey -> E.Path -> Expectation
 hasErrorAtPath inferResult path = case inferResult of
@@ -72,3 +72,6 @@ hasErrorAtPath inferResult path = case inferResult of
         index:restOfPath -> case getItemAtIndex index childResults of
             Just childResult -> childResult `hasErrorAtPath` restOfPath
             Nothing -> expectationFailure "path doesn't exist"
+
+getConstructorType :: BT.DataConstructorKey -> Maybe (T.Type BT.TypeDefKey)
+getConstructorType = T.getConstructorType BT.getTypeDef

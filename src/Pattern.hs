@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveFunctor #-}
+
 module Pattern where
 
 type VarName = String
@@ -8,4 +10,4 @@ data Pattern constructorKey
     | Var VarName
     | Constructor constructorKey [Pattern constructorKey]
     | Int Int
-    deriving (Eq, Show)
+    deriving (Eq, Show, Functor)

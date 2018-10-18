@@ -1,4 +1,7 @@
+{-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Main where
 
@@ -10,6 +13,7 @@ import Data.Char
 import Data.List
 import Data.Maybe
 import Data.Text.Zipper
+import GHC.Generics
 import System.Timeout
 import Text.Read
 import Brick hiding (Location)
@@ -37,7 +41,8 @@ import qualified Type as T
 import qualified Value as V
 
 data AppState = AppState
-    { _defs :: Map.Map DefId (Maybe DefName, History Expr)
+    { _customTypeDefs :: Map.Map Id (Maybe Name, History TypeDef)
+    , _defs :: Map.Map Id (Maybe Name, History Expr)
     , _locationHistory :: History Location
     , _wrappingStyle :: WrappingStyle
     , _clipboard :: Clipboard
@@ -52,22 +57,25 @@ data DerivedState = DerivedState
     { _inferResult :: InferResult
     , _evalResult :: EvalResult
     }
-type DefId = Int
-type DefName = String
-type Expr = E.Expr DefId BT.ConstructorKey BP.Primitive
-type Alternative = E.Alternative DefId BT.ConstructorKey BP.Primitive
-type Pattern = P.Pattern BT.ConstructorKey
-type Type = T.Type BT.TypeDefKey
-type Value = V.Value BT.ConstructorKey
-type InferResult = Infer.InferResult BT.TypeDefKey
-type TypeTree = Infer.TypeTree BT.TypeDefKey
-type TypeError = Infer.TypeError BT.TypeDefKey
+type Id = Int
+type Name = String
+type TypeDef = T.TypeDef TypeDefKey
+data TypeDefKey = BuiltIn BT.TypeDefKey | Custom Id deriving (Eq, Generic, NFData)
+type Expr = E.Expr Id DataConstructorKey BP.Primitive
+type DataConstructorKey = T.DataConstructorKey TypeDefKey
+type Alternative = E.Alternative Id DataConstructorKey BP.Primitive
+type Pattern = P.Pattern DataConstructorKey
+type Type = T.Type TypeDefKey
+type Value = V.Value DataConstructorKey
+type InferResult = Infer.InferResult TypeDefKey
+type TypeTree = Infer.TypeTree TypeDefKey
+type TypeError = Infer.TypeError TypeDefKey
 data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
 data Location = DefListView SelectedDefId | DefView DefViewLocation
-type SelectedDefId = DefId
-type DefViewLocation = (DefId, E.Path)
+type SelectedDefId = Id
+type DefViewLocation = (Id, E.Path)
 data EditState = NotEditing | Naming EditorState | SelectionEditing EditorState (Maybe AutocompleteState)
 type EditorState = Editor String AppResourceName
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
@@ -87,30 +95,41 @@ makeLenses ''DerivedState
 makePrisms ''Location
 makePrisms ''Selectable
 
+instance E.PrimitiveType BP.Primitive TypeDefKey where
+    getType = BP.getType BuiltIn
+instance E.PrimitiveValue BP.Primitive DataConstructorKey where
+    getValue = BP.getValue BuiltIn
+
 main :: IO AppState
 main = defaultMain app initialState
 
 initialState :: AppState
-initialState = AppState initialDefs locationHistory NoParens clipboard NotEditing Nothing where
+initialState = AppState typeDefs defs locationHistory NoParens clipboard NotEditing Nothing where
+    typeDefs = Map.empty
+    defs = initialDefs
     clipboard = Clipboard Nothing Nothing
     locationHistory = History.create $ DefListView 0
 
-initialDefs :: Map.Map DefId (Maybe DefName, History Expr)
-initialDefs = Map.mapKeys keyToId $ Map.map f Defs.defs where
-    f (name, expr) = (Just name, History.create $ replaceDefKeys keyToId expr)
-    keyToId key = Map.findWithDefault (-1) key keyToIdMap
-    keyToIdMap = Map.fromList $ zip (Map.keys Defs.defs) [0..]
+initialDefs :: Map.Map Id (Maybe Name, History Expr)
+initialDefs = Map.mapKeys modifyDefKey $ Map.map f Defs.defs where
+    f (name, expr) = (Just name, History.create $ replaceKeysInExpr modifyDefKey modifyConstructorKey expr)
+    modifyDefKey key = Map.findWithDefault (-1) key defKeyToIdMap
+    defKeyToIdMap = Map.fromList $ zip (Map.keys Defs.defs) [0..]
+    modifyConstructorKey = over T.typeDefKey BuiltIn
 
-replaceDefKeys :: (d -> DefId) -> E.Expr d c p -> E.Expr DefId c p
-replaceDefKeys keyToId expr = case expr of
+replaceKeysInExpr :: (d1 -> d2) -> (c1 -> c2) -> E.Expr d1 c1 p -> E.Expr d2 c2 p
+replaceKeysInExpr modifyDefKey modifyConstructorKey expr = case expr of
     E.Hole -> E.Hole
-    E.Def key -> E.Def $ keyToId key
+    E.Def key -> E.Def $ modifyDefKey key
     E.Var v -> E.Var v
-    E.Fn alts -> E.Fn $ fmap (replaceDefKeys keyToId) <$> alts
-    E.Call callee arg -> E.Call (replaceDefKeys keyToId callee) (replaceDefKeys keyToId arg)
-    E.Constructor n -> E.Constructor n
+    E.Fn alts -> E.Fn $ replaceInAlt <$> alts
+    E.Call callee arg -> E.Call (replaceInExpr callee) (replaceInExpr arg)
+    E.Constructor key -> E.Constructor $ modifyConstructorKey key
     E.Int n -> E.Int n
     E.Primitive p -> E.Primitive p
+    where
+        replaceInExpr = replaceKeysInExpr modifyDefKey modifyConstructorKey
+        replaceInAlt (pattern, expr) = (fmap modifyConstructorKey pattern, replaceInExpr expr)
 
 app :: App AppState e AppResourceName
 app = App
@@ -135,7 +154,7 @@ gray :: Vty.Color
 gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark backgrounds
 
 drawDefView :: AppState -> DefViewLocation -> [AppWidget]
-drawDefView (AppState defs _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult))) (defId, selectionPath) = ui where
+drawDefView (AppState customTypeDefs defs _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult))) (defId, selectionPath) = ui where
     ui = case editState of
         SelectionEditing _ (Just (AutocompleteState autocompleteList editorExtent)) | autocompleteListLength > 0 ->
             [ translateBy autocompleteOffset autocomplete, layout ] where
@@ -158,12 +177,15 @@ drawDefView (AppState defs _ wrappingStyle _ editState (Just (DerivedState infer
     maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
-        Just t -> evalStr ++ ": " ++ prettyPrintType show t
+        Just t -> evalStr ++ ": " ++ prettyPrintType getTypeName t
         Nothing -> "Type error"
+    getTypeName key = case key of
+        BuiltIn k -> show k
+        Custom id -> fromMaybe "<Unnamed>" $ fst $ customTypeDefs Map.! id
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
         Error -> ""
-        Value v -> fromMaybe "" $ prettyPrintValue (view BT.constructorName) v
+        Value v -> fromMaybe "" $ prettyPrintValue (view T.constructorName) v
 
 renderTitle :: String -> Widget n
 renderTitle title = hBorderWithLabel $ str $ "  " ++ title ++ "  "
@@ -192,7 +214,7 @@ renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case
         (renderResultType, widget) = renderer wrappingStyle $ RenderChild renderChild
         renderChild index = renderWithAttrs wrappingStyle editState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
 
-renderExpr :: Map.Map DefId DefName -> Expr -> Renderer
+renderExpr :: Map.Map Id Name -> Expr -> Renderer
 renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
     E.Hole -> (OneWord, str "_")
     E.Def defId -> (OneWord, str $ fromMaybe "missing" $ Map.lookup defId defNames)
@@ -219,14 +241,14 @@ renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
         where
             (calleeResultType, renderedCallee) = renderChild 0 (renderExpr defNames callee)
             (argResultType, renderedArg) = renderChild 1 (renderExpr defNames arg)
-    E.Constructor key -> (OneWord, str $ view BT.constructorName key)
+    E.Constructor key -> (OneWord, str $ view T.constructorName key)
     E.Int n -> (OneWord, str $ show n)
     E.Primitive p -> (OneWord, str $ E.getDisplayName p)
 
 withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
-renderAlternative :: Map.Map DefId DefName -> RenderChild -> Int -> Alternative -> RenderResult
+renderAlternative :: Map.Map Id Name -> RenderChild -> Int -> Alternative -> RenderResult
 renderAlternative defNames (RenderChild renderChild) alternativeIndex (pattern, expr) =
     if exprResultType == MultiLine
     then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
@@ -241,7 +263,7 @@ renderPattern pattern wrappingStyle (RenderChild renderChild) = case pattern of
     P.Var var -> (OneWord, str var)
     P.Constructor key children -> (resultType, hBox $ intersperse (str " ") (str name : renderedChildren)) where
         resultType = if null children then OneWord else OneLine
-        name = view BT.constructorName key
+        name = view T.constructorName key
         renderedChildren = addParensIfNeeded <$> zipWith renderChild [0..] childRenderers
         addParensIfNeeded (resultType, renderedChild) = withParensIf (resultType /= OneWord) renderedChild
         childRenderers = renderPattern <$> children
@@ -309,7 +331,7 @@ handleEvent appState (VtyEvent event) = case view present $ view locationHistory
     DefListView selectedId -> handleEventOnDefListView appState event selectedId
     DefView defViewLocation -> handleEventOnDefView appState event defViewLocation
 
-handleEventOnDefListView :: AppState -> Vty.Event -> DefId -> EventM AppResourceName (Next AppState)
+handleEventOnDefListView :: AppState -> Vty.Event -> Id -> EventM AppResourceName (Next AppState)
 handleEventOnDefListView appState event selectedDefId = case event of
     Vty.EvKey Vty.KEnter [] -> goToDef selectedDefId appState
     Vty.EvKey Vty.KUp [] -> select $ fromMaybe selectedDefId maybePrevDefId
@@ -363,12 +385,20 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
                             primitives = E.Primitive <$> [minBound..]
                             defs = E.Def <$> defIds
                             constructors = E.Constructor <$> constructorKeys
-                            constructorKeys = BT.typeDefKeys >>= getConstructorKeys
-                            getConstructorKeys typeDefKey = BT.ConstructorKey typeDefKey <$> getConstructorNames typeDefKey
-                            getConstructorNames typeDefKey = fst <$> getConstructors typeDefKey
-                            getConstructors = view BT.constructors . BT.getTypeDef
+                            constructorKeys = typeDefKeys >>= getConstructorKeys
+                            getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
+                            getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
+                            getConstructors = view T.dataConstructors . getTypeDef currentCustomTypeDefs
                         Pattern _ -> map Pattern constructorPatterns where
-                            constructorPatterns = BT.typeDefKeys >>= createConstructorPatterns
+                            constructorPatterns = do
+                                typeDefKey <- typeDefKeys
+                                T.DataConstructor constructorName paramTypes <-
+                                    view T.dataConstructors $ getTypeDef currentCustomTypeDefs typeDefKey
+                                let constructorKey = T.DataConstructorKey typeDefKey constructorName
+                                let arity = length paramTypes
+                                let wildcards = replicate arity P.Wildcard
+                                return $ P.Constructor constructorKey wildcards
+                    typeDefKeys = BuiltIn <$> BT.typeDefKeys
             maybeEditorExtent <- lookupExtent EditorName
             setEditState $ SelectionEditing newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
         where editorContent = head $ getEditContents editor
@@ -401,6 +431,7 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     where
+        currentCustomTypeDefs = view customTypeDefs appState
         currentDefs = view defs appState
         defIds = Map.keys currentDefs
         defNames = Map.mapMaybe fst currentDefs
@@ -479,8 +510,8 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
         undo = liftIO (updateDerivedState $ appState & defs . ix defId . _2 %~ goBack) >>= continue
         redo = liftIO (updateDerivedState $ appState & defs . ix defId . _2 %~ goForward) >>= continue
 
-goToDef :: DefId -> AppState -> EventM AppResourceName (Next AppState)
-goToDef name = modifyLocationHistory (push $ DefView (name, []))
+goToDef :: Id -> AppState -> EventM AppResourceName (Next AppState)
+goToDef id = modifyLocationHistory (push $ DefView (id, []))
 
 goBackInLocationHistory :: AppState -> EventM AppResourceName (Next AppState)
 goBackInLocationHistory = modifyLocationHistory goBack
@@ -491,25 +522,17 @@ goForwardInLocationHistory = modifyLocationHistory goForward
 modifyLocationHistory :: (History Location -> History Location) -> AppState -> EventM AppResourceName (Next AppState)
 modifyLocationHistory modify appState = liftIO (updateDerivedState $ appState & locationHistory %~ modify) >>= continue
 
-printAutocompleteItem :: Map.Map DefId DefName -> Selectable -> String
+printAutocompleteItem :: Map.Map Id Name -> Selectable -> String
 printAutocompleteItem defNames item = case item of
     Expr (E.Def id) -> fromMaybe "unnamed" $ Map.lookup id defNames
     Expr (E.Var name) -> name
-    Expr (E.Constructor key) -> view BT.constructorName key
+    Expr (E.Constructor key) -> view T.constructorName key
     Expr (E.Int n) -> show n
     Expr (E.Primitive p) -> E.getDisplayName p
     Pattern (P.Var name) -> name
-    Pattern (P.Constructor key _) -> view BT.constructorName key
+    Pattern (P.Constructor key _) -> view T.constructorName key
     Pattern (P.Int n) -> show n
     _ -> ""
-
-createConstructorPatterns :: BT.TypeDefKey -> [Pattern]
-createConstructorPatterns typeDefKey = createPattern <$> constructors where
-    createPattern (constructorName, paramTypes) = P.Constructor constructorKey wildcards where
-        constructorKey = BT.ConstructorKey typeDefKey constructorName
-        wildcards = replicate arity P.Wildcard
-        arity = length paramTypes
-    constructors = view BT.constructors $ BT.getTypeDef typeDefKey
 
 getVarsAtPath :: E.Path -> E.Expr d c p -> [E.VarName]
 getVarsAtPath path expr = case path of
@@ -571,9 +594,10 @@ addAlternativeAtPath selectionPath expr = case (expr, selectionPath) of
 
 updateDerivedState :: AppState -> IO AppState
 updateDerivedState appState = do
+    let typeDefs = view customTypeDefs appState
     let defExprs = view present . snd <$> view defs appState
     let location = view present $ view locationHistory appState
-    newDerivedState <- traverse (createDerivedState defExprs) (preview _DefView location)
+    newDerivedState <- traverse (createDerivedState (getTypeDef typeDefs) defExprs) (preview _DefView location)
     return $ appState & derivedState .~ newDerivedState
 
 updateEvalResult :: AppState -> IO AppState
@@ -583,14 +607,19 @@ updateEvalResult appState = do
     newEvalResult <- traverse (createEvalResult defExprs) (preview _DefView location)
     return $ appState & derivedState . _Just . evalResult %~ flip fromMaybe newEvalResult
 
-createDerivedState :: Map.Map DefId Expr -> DefViewLocation -> IO DerivedState
-createDerivedState defs location@(exprName, _) =
-    DerivedState (createInferResult defs exprName) <$> createEvalResult defs location
+createDerivedState :: (TypeDefKey -> TypeDef) -> Map.Map Id Expr -> DefViewLocation -> IO DerivedState
+createDerivedState getTypeDef defs location@(exprName, _) =
+    DerivedState (createInferResult getTypeDef defs exprName) <$> createEvalResult defs location
 
-createInferResult :: Map.Map DefId Expr -> DefId -> InferResult
-createInferResult defs defId = Infer.inferType BT.getConstructorType defs $ defs Map.! defId
+createInferResult :: (TypeDefKey -> TypeDef) -> Map.Map Id Expr -> Id -> InferResult
+createInferResult getTypeDef defs defId = Infer.inferType (T.getConstructorType getTypeDef) defs $ defs Map.! defId
 
-createEvalResult :: Map.Map DefId Expr -> DefViewLocation -> IO EvalResult
+getTypeDef :: Map.Map Id (n, History TypeDef) -> TypeDefKey -> TypeDef
+getTypeDef customTypeDefs key = case key of
+    BuiltIn k -> BT.getTypeDef k & T.dataConstructors %~ fmap (fmap BuiltIn)
+    Custom id -> view present . snd $ customTypeDefs Map.! id
+
+createEvalResult :: Map.Map Id Expr -> DefViewLocation -> IO EvalResult
 createEvalResult defs (defId, selectionPath) = do
     let maybeDef = Map.lookup defId defs
     let maybeSelected = maybeDef >>= getItemAtPathInExpr selectionPath
