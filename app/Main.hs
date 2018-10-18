@@ -176,7 +176,7 @@ drawExprDefView appState (defId, selectionPath) = ui where
             autocompleteOffset = Brick.Types.Location (editorX, editorY + 1)
             Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
             autocomplete = hLimit 20 $ vLimit (min autocompleteListLength 5) $
-                ListWidget.renderList renderAutocompleteItem True $ printAutocompleteItem defNames <$> autocompleteList
+                ListWidget.renderList renderAutocompleteItem True $ printAutocompleteItem (getExprName appState) <$> autocompleteList
             autocompleteListLength = length $ ListWidget.listElements autocompleteList
         _ -> [ layout ]
     layout = renderedTitle <=> viewport Viewport Both coloredExpr <=> str bottomStr
@@ -187,8 +187,7 @@ drawExprDefView appState (defId, selectionPath) = ui where
     (maybeDefName, defHistory) = defs Map.! defId
     coloredExpr = modifyDefAttr (flip Vty.withForeColor gray) renderedExpr -- unselected parts of the expression are gray
     expr = view present defHistory
-    (_, renderedExpr) = renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError (renderExpr defNames expr)
-    defNames = Map.mapMaybe fst defs
+    (_, renderedExpr) = renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError (renderExpr appState expr)
     maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
@@ -226,16 +225,16 @@ renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case
         (renderResultType, widget) = renderer wrappingStyle $ RenderChild renderChild
         renderChild index = renderWithAttrs wrappingStyle editState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
 
-renderExpr :: Map.Map Id Name -> Expr -> Renderer
-renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
+renderExpr :: AppState -> Expr -> Renderer
+renderExpr appState expr wrappingStyle (RenderChild renderChild) = case expr of
     E.Hole -> (OneWord, str "_")
-    E.Def defId -> (OneWord, str $ fromMaybe "missing" $ Map.lookup defId defNames)
+    E.Def id -> (OneWord, str $ getExprName appState id)
     E.Var var -> (OneWord, str var)
     E.Fn alternatives -> if null restOfAltResults then singleAltResult else multiAltResult where
         singleAltResult = (firstAltResultType, str "λ " <+> firstAltWidget)
         multiAltResult = (MultiLine, vBox $ str "λ " <+> firstAltWidget : map (str "| " <+>) restOfAltWidgets)
         (firstAltResultType, firstAltWidget) NonEmpty.:| restOfAltResults =
-            NonEmpty.zipWith (renderAlternative defNames $ RenderChild renderChild) (NonEmpty.fromList [0..]) alternatives
+            NonEmpty.zipWith (renderAlternative appState $ RenderChild renderChild) (NonEmpty.fromList [0..]) alternatives
         restOfAltWidgets = map snd restOfAltResults
     E.Call callee arg -> case callee of
         E.Fn _ -> (MultiLine, renderedMatch) where
@@ -251,8 +250,8 @@ renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
             multiLineResult = (MultiLine, renderedCallee <=> indent renderedArg)
             oneLineResult = (OneLine, renderedCallee <+> str " " <+> withParensIf (argResultType /= OneWord) renderedArg)
         where
-            (calleeResultType, renderedCallee) = renderChild 0 (renderExpr defNames callee)
-            (argResultType, renderedArg) = renderChild 1 (renderExpr defNames arg)
+            (calleeResultType, renderedCallee) = renderChild 0 (renderExpr appState callee)
+            (argResultType, renderedArg) = renderChild 1 (renderExpr appState arg)
     E.Constructor key -> (OneWord, str $ view T.constructorName key)
     E.Int n -> (OneWord, str $ show n)
     E.Primitive p -> (OneWord, str $ E.getDisplayName p)
@@ -260,14 +259,14 @@ renderExpr defNames expr wrappingStyle (RenderChild renderChild) = case expr of
 withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
-renderAlternative :: Map.Map Id Name -> RenderChild -> Int -> Alternative -> RenderResult
-renderAlternative defNames (RenderChild renderChild) alternativeIndex (pattern, expr) =
+renderAlternative :: AppState -> RenderChild -> Int -> Alternative -> RenderResult
+renderAlternative appState (RenderChild renderChild) alternativeIndex (pattern, expr) =
     if exprResultType == MultiLine
     then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
     else (OneLine, renderedPattern <+> str " -> " <+> renderedExpr)
     where
         (_, renderedPattern) = renderChild (2 * alternativeIndex) $ renderPattern pattern
-        (exprResultType, renderedExpr) = renderChild (2 * alternativeIndex + 1) $ renderExpr defNames expr
+        (exprResultType, renderedExpr) = renderChild (2 * alternativeIndex + 1) $ renderExpr appState expr
 
 renderPattern :: Pattern -> Renderer
 renderPattern pattern wrappingStyle (RenderChild renderChild) = case pattern of
@@ -399,7 +398,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
             let newEditorContent = head $ getEditContents newEditor
             let editorContentChanged = newEditorContent /= editorContent
             let isSimilarToEditorContent str = isInfixOf (map toLower newEditorContent) (map toLower str)
-            let isMatch = isSimilarToEditorContent . printAutocompleteItem exprDefNames
+            let isMatch = isSimilarToEditorContent . printAutocompleteItem getCurrentExprName
             newAutocompleteList <- case maybeAutocompleteState of
                 Just (AutocompleteState autocompleteList _) | not editorContentChanged -> ListWidget.handleListEvent event autocompleteList
                 _ -> pure $ ListWidget.list AutocompleteName items 1 where
@@ -458,7 +457,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         currentCustomTypeDefs = view customTypeDefs appState
         currentExprDefs = view exprDefs appState
         exprDefIds = Map.keys currentExprDefs
-        exprDefNames = Map.mapMaybe fst currentExprDefs
+        getCurrentExprName = getExprName appState
         (maybeDefName, defHistory) = currentExprDefs Map.! defId
         defExpr = view present defHistory
         currentClipboard = view clipboard appState
@@ -492,7 +491,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
             _ -> continue appState
         initiateSelectionEdit = setEditState $ SelectionEditing initialSelectionEditor Nothing
         initialSelectionEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialSelectionEditorContent
-        initialSelectionEditorContent = printAutocompleteItem exprDefNames selected
+        initialSelectionEditorContent = printAutocompleteItem getCurrentExprName selected
         cancelEdit = setEditState NotEditing
         commitEditorContent editorContent = modifyDef $ case readMaybe editorContent of
             Just int -> replaceSelected (E.Int int) (P.Int int)
@@ -551,9 +550,9 @@ goForwardInLocationHistory = modifyLocationHistory goForward
 modifyLocationHistory :: (History Location -> History Location) -> AppState -> EventM AppResourceName (Next AppState)
 modifyLocationHistory modify appState = liftIO (updateDerivedState $ appState & locationHistory %~ modify) >>= continue
 
-printAutocompleteItem :: Map.Map Id Name -> Selectable -> String
-printAutocompleteItem defNames item = case item of
-    Expr (E.Def id) -> fromMaybe "unnamed" $ Map.lookup id defNames
+printAutocompleteItem :: (Id -> Name) -> Selectable -> String
+printAutocompleteItem getExprName item = case item of
+    Expr (E.Def id) -> getExprName id
     Expr (E.Var name) -> name
     Expr (E.Constructor key) -> view T.constructorName key
     Expr (E.Int n) -> show n
