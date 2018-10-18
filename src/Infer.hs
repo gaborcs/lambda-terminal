@@ -2,6 +2,7 @@
 
 module Infer where
 
+import Primitive
 import Control.Lens
 import Control.Lens.Extras
 import Control.Monad.State
@@ -27,20 +28,20 @@ data InfiniteType = InfiniteType
 makePrisms ''InferResult
 makePrisms ''IntermediateTree
 
-inferType :: (Eq t, Ord d, E.PrimitiveType p t)
+inferType :: (Eq t, Ord d, PrimitiveType t)
     => (c -> Maybe (T.Type t))
-    -> Map.Map d (E.Expr d c p)
-    -> E.Expr d c p
+    -> Map.Map d (E.Expr d c)
+    -> E.Expr d c
     -> InferResult t
 inferType getConstructorType defs expr = solve intermediateTree where
     intermediateTree = evalState (infer instantiateConstructorType (Map.map Right defs) Map.empty expr) 0
     instantiateConstructorType key = instantiate <$> getConstructorType key
 
-infer :: (Ord d, E.PrimitiveType p t)
+infer :: (Ord d, PrimitiveType t)
     => (c -> Maybe (Infer (T.Type t)))
-    -> Map.Map d (Either (T.Type t) (E.Expr d c p))
+    -> Map.Map d (Either (T.Type t) (E.Expr d c))
     -> TypeEnv t
-    -> E.Expr d c p
+    -> E.Expr d c
     -> Infer (IntermediateTree t)
 infer instantiateConstructorType defs env expr = case expr of
     E.Hole -> TypedIntermediate <$> (TypedIntermediateTree <$> freshTVar <*> pure [] <*> pure [])
@@ -89,13 +90,13 @@ infer instantiateConstructorType defs env expr = case expr of
             return $ TypedIntermediate $ TypedIntermediateTree t [] []
         Nothing -> return $ UntypedIntermediate []
     E.Int _ -> return $ TypedIntermediate $ TypedIntermediateTree T.Int [] []
-    E.Primitive p -> return $ TypedIntermediate $ TypedIntermediateTree (E.getType p) [] []
+    E.Primitive p -> return $ TypedIntermediate $ TypedIntermediateTree (getType p) [] []
 
-inferAlternative :: (Ord d, E.PrimitiveType p t)
+inferAlternative :: (Ord d, PrimitiveType t)
     => (c -> Maybe (Infer (T.Type t)))
-    -> Map.Map d (Either (T.Type t) (E.Expr d c p))
+    -> Map.Map d (Either (T.Type t) (E.Expr d c))
     -> TypeEnv t
-    -> E.Alternative d c p
+    -> E.Alternative d c
     -> Infer (IntermediateTree t, IntermediateTree t)
 inferAlternative instantiateConstructorType defs env (pattern, expr) = do
     (patternTree, patternTypeEnv) <- inferPattern instantiateConstructorType pattern

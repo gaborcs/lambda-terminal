@@ -1,5 +1,6 @@
 module Eval where
 
+import Primitive
 import Control.Monad
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
@@ -8,10 +9,10 @@ import qualified Expr as E
 import qualified Pattern as P
 import qualified Value as V
 
-eval :: (Eq c, Ord d, E.PrimitiveValue p c) => Map.Map d (E.Expr d c p) -> E.Expr d c p -> Maybe (V.Value c)
+eval :: (Eq c, Ord d, PrimitiveValue c) => Map.Map d (E.Expr d c) -> E.Expr d c -> Maybe (V.Value c)
 eval = eval' Map.empty
 
-eval' :: (Eq c, Ord d, E.PrimitiveValue p c) => V.Env c -> Map.Map d (E.Expr d c p) -> (E.Expr d c p) -> Maybe (V.Value c)
+eval' :: (Eq c, Ord d, PrimitiveValue c) => V.Env c -> Map.Map d (E.Expr d c) -> (E.Expr d c) -> Maybe (V.Value c)
 eval' env defs expr = case expr of
     E.Hole -> Nothing
     E.Def defId -> Map.lookup defId defs >>= eval' env defs
@@ -31,7 +32,7 @@ eval' env defs expr = case expr of
             _ -> Nothing
     E.Constructor key -> Just $ V.Constructor key []
     E.Int n -> Just $ V.Int n
-    E.Primitive p -> Just $ E.getValue p
+    E.Primitive p -> Just $ getValue p
 
 match :: Eq c => Maybe (V.Value c) -> P.Pattern c -> Maybe (Map.Map E.VarName (Maybe (V.Value c)))
 match maybeValue pattern = case pattern of

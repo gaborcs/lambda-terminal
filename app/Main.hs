@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Main where
 
@@ -24,6 +23,7 @@ import Eval
 import History
 import PrettyPrintType
 import PrettyPrintValue
+import Primitive
 import Util
 import qualified Data.Map as Map
 import qualified Data.List.NonEmpty as NonEmpty
@@ -31,7 +31,6 @@ import qualified Data.Vector as Vec
 import qualified Brick.Types
 import qualified Brick.Widgets.List as ListWidget
 import qualified Graphics.Vty as Vty
-import qualified BuiltInPrimitives as BP
 import qualified BuiltInTypes as BT
 import qualified Defs
 import qualified Expr as E
@@ -61,9 +60,9 @@ type Id = Int
 type Name = String
 type TypeDef = T.TypeDef TypeDefKey
 data TypeDefKey = BuiltIn BT.TypeDefKey | Custom Id deriving (Eq, Generic, NFData)
-type Expr = E.Expr Id DataConstructorKey BP.Primitive
+type Expr = E.Expr Id DataConstructorKey
 type DataConstructorKey = T.DataConstructorKey TypeDefKey
-type Alternative = E.Alternative Id DataConstructorKey BP.Primitive
+type Alternative = E.Alternative Id DataConstructorKey
 type Pattern = P.Pattern DataConstructorKey
 type Type = T.Type TypeDefKey
 type Value = V.Value DataConstructorKey
@@ -96,10 +95,10 @@ makeLenses ''DerivedState
 makePrisms ''Location
 makePrisms ''Selectable
 
-instance E.PrimitiveType BP.Primitive TypeDefKey where
-    getType = BP.getType BuiltIn
-instance E.PrimitiveValue BP.Primitive DataConstructorKey where
-    getValue = BP.getValue BuiltIn
+instance PrimitiveType TypeDefKey where
+    getType = fmap BuiltIn . getPrimitiveType
+instance PrimitiveValue DataConstructorKey where
+    getValue = getPrimitiveValue BuiltIn
 
 main :: IO AppState
 main = defaultMain app initialState
@@ -118,7 +117,7 @@ initialDefs = Map.mapKeys modifyDefKey $ Map.map f Defs.defs where
     defKeyToIdMap = Map.fromList $ zip (Map.keys Defs.defs) [0..]
     modifyConstructorKey = over T.typeDefKey BuiltIn
 
-replaceKeysInExpr :: (d1 -> d2) -> (c1 -> c2) -> E.Expr d1 c1 p -> E.Expr d2 c2 p
+replaceKeysInExpr :: (d1 -> d2) -> (c1 -> c2) -> E.Expr d1 c1 -> E.Expr d2 c2
 replaceKeysInExpr modifyDefKey modifyConstructorKey expr = case expr of
     E.Hole -> E.Hole
     E.Def key -> E.Def $ modifyDefKey key
@@ -254,7 +253,7 @@ renderExpr appState expr wrappingStyle (RenderChild renderChild) = case expr of
             (argResultType, renderedArg) = renderChild 1 (renderExpr appState arg)
     E.Constructor key -> (OneWord, str $ view T.constructorName key)
     E.Int n -> (OneWord, str $ show n)
-    E.Primitive p -> (OneWord, str $ E.getDisplayName p)
+    E.Primitive p -> (OneWord, str $ getDisplayName p)
 
 withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
@@ -556,13 +555,13 @@ printAutocompleteItem getExprName item = case item of
     Expr (E.Var name) -> name
     Expr (E.Constructor key) -> view T.constructorName key
     Expr (E.Int n) -> show n
-    Expr (E.Primitive p) -> E.getDisplayName p
+    Expr (E.Primitive p) -> getDisplayName p
     Pattern (P.Var name) -> name
     Pattern (P.Constructor key _) -> view T.constructorName key
     Pattern (P.Int n) -> show n
     _ -> ""
 
-getVarsAtPath :: E.Path -> E.Expr d c p -> [E.VarName]
+getVarsAtPath :: E.Path -> E.Expr d c -> [E.VarName]
 getVarsAtPath path expr = case path of
     [] -> []
     edge:restOfPath -> case expr of
@@ -577,7 +576,7 @@ getVars (P.Var name) = [name]
 getVars (P.Constructor _ children) = children >>= getVars
 getVars _ = []
 
-modifyAtPathInExpr :: E.Path -> (E.Expr d c p -> E.Expr d c p) -> (P.Pattern c -> P.Pattern c) -> E.Expr d c p -> E.Expr d c p
+modifyAtPathInExpr :: E.Path -> (E.Expr d c -> E.Expr d c) -> (P.Pattern c -> P.Pattern c) -> E.Expr d c -> E.Expr d c
 modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
     [] -> modifyExpr expr
     edge:restOfPath -> case expr of
@@ -599,7 +598,7 @@ modifyAtPathInPattern path modify pattern = case path of
         P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (modifyAtPathInPattern restOfPath modify) children
         _ -> error "invalid path"
 
-dropPatternPartOfPath :: E.Expr d c p -> E.Path -> E.Path
+dropPatternPartOfPath :: E.Expr d c -> E.Path -> E.Path
 dropPatternPartOfPath expr path = case path of
     [] -> []
     edge:restOfPath -> case expr of
@@ -608,7 +607,7 @@ dropPatternPartOfPath expr path = case path of
         E.Call callee arg | edge == 1 -> 1 : dropPatternPartOfPath arg restOfPath
         _ -> error "invalid path"
 
-addAlternativeAtPath :: E.Path -> E.Expr d c p -> Maybe (E.Expr d c p)
+addAlternativeAtPath :: E.Path -> E.Expr d c -> Maybe (E.Expr d c)
 addAlternativeAtPath selectionPath expr = case (expr, selectionPath) of
     (E.Fn alts, edge:restOfPath) | odd edge -> case addAlternativeAtPath restOfPath (snd $ alts NonEmpty.!! altIndex) of
         Just expr -> Just $ E.Fn $ modifyItemAtIndexInNonEmpty altIndex modifyAlt alts where
