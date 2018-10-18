@@ -25,10 +25,9 @@ defs = Map.fromList
             (P.Constructor (T.DataConstructorKey BT.Bool "True") [], Var "thenExpr") :|
             [(P.Constructor (T.DataConstructorKey BT.Bool "False") [], Var "elseExpr")])
         (Var "condition")))
-    , (FactorialD, ("factorial", fn "n" $
-        Call (Call (Call (Def IfD) (Call (Call (Primitive Equals) (Var "n")) (Int 0)))
-             (Int 1))
-             (Call (Call (Primitive Times) (Var "n")) (Call (Def FactorialD) (Call (Call (Primitive Minus) (Var "n")) (Int 1))))))
+    , (FactorialD, ("factorial", Fn $
+        (P.Int 0, Int 1) :|
+        [(P.Var "n", Call (Call (Primitive Times) (Var "n")) (Call (Def FactorialD) (Call (Call (Primitive Minus) (Var "n")) (Int 1))))]))
     , (FibonacciSeqD, ("fibonacciSeq", Call (Call (Def FibonacciSeqFromD) (Int 1)) (Int 1)))
     , (FibonacciSeqFromD, ("fibonacciSeqFrom", fn "a" $ fn "b" $
         Call (Call (Constructor (T.DataConstructorKey BT.InfList "Cons")) (Var "a"))
