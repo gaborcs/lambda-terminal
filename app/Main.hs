@@ -73,8 +73,9 @@ type TypeError = Infer.TypeError TypeDefKey
 data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
-data Location = DefListView SelectedDefId | ExprDefView ExprDefViewLocation
-type SelectedDefId = Id
+data Location = DefListView SelectedDefKey | ExprDefView ExprDefViewLocation
+type SelectedDefKey = DefKey
+data DefKey = TypeDefKey TypeDefKey | ExprDefKey Id deriving Eq
 type ExprDefViewLocation = (Id, E.Path)
 data EditState = NotEditing | Naming EditorState | SelectionEditing EditorState (Maybe AutocompleteState)
 type EditorState = Editor String AppResourceName
@@ -108,7 +109,7 @@ initialState = AppState typeDefs defs locationHistory NoParens clipboard NotEdit
     typeDefs = Map.empty
     defs = initialDefs
     clipboard = Clipboard Nothing Nothing
-    locationHistory = History.create $ DefListView 0
+    locationHistory = History.create $ DefListView $ TypeDefKey $ BuiltIn minBound
 
 initialDefs :: Map.Map Id (Maybe Name, History Expr)
 initialDefs = Map.mapKeys modifyDefKey $ Map.map f Defs.defs where
@@ -144,17 +145,31 @@ draw appState = case view present $ view locationHistory appState of
     DefListView selectedDefId -> drawDefListView appState selectedDefId
     ExprDefView defViewLocation -> drawExprDefView appState defViewLocation
 
-drawDefListView :: AppState -> SelectedDefId -> [AppWidget]
-drawDefListView appState selectedDefId = [ renderTitle "Definitions" <=> renderedList ] where
-    renderedList = vBox $ renderItem <$> Map.toAscList (view exprDefs appState)
-    renderItem (defId, (maybeName, _)) = grayIf (defId /= selectedDefId) (str $ fromMaybe "unnamed" maybeName)
+drawDefListView :: AppState -> SelectedDefKey -> [AppWidget]
+drawDefListView appState selectedDefKey = [ renderTitle "Definitions" <=> renderedList ] where
+    renderedList = vBox $ renderItem <$> getDefKeys appState
+    renderItem key = grayIf (key /= selectedDefKey) (str $ getDefName appState key)
     grayIf cond = if cond then modifyDefAttr $ flip Vty.withForeColor gray else id
+
+getDefName :: AppState -> DefKey -> Name
+getDefName appState key = case key of
+    TypeDefKey k -> getTypeName appState k
+    ExprDefKey id -> getExprName appState id
+
+getTypeName :: AppState -> TypeDefKey -> Name
+getTypeName appState key = case key of
+    BuiltIn k -> show k
+    Custom id -> fromMaybe "Unnamed" $ fst $ view customTypeDefs appState Map.! id
+
+getExprName :: AppState -> Id -> Name
+getExprName appState id = fromMaybe "unnamed" $ fst $ view exprDefs appState Map.! id
 
 gray :: Vty.Color
 gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark backgrounds
 
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
-drawExprDefView (AppState customTypeDefs defs _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult))) (defId, selectionPath) = ui where
+drawExprDefView appState (defId, selectionPath) = ui where
+    AppState customTypeDefs defs _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult)) = appState
     ui = case editState of
         SelectionEditing _ (Just (AutocompleteState autocompleteList editorExtent)) | autocompleteListLength > 0 ->
             [ translateBy autocompleteOffset autocomplete, layout ] where
@@ -177,11 +192,8 @@ drawExprDefView (AppState customTypeDefs defs _ wrappingStyle _ editState (Just 
     maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
-        Just t -> evalStr ++ ": " ++ prettyPrintType getTypeName t
+        Just t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) t
         Nothing -> "Type error"
-    getTypeName key = case key of
-        BuiltIn k -> show k
-        Custom id -> fromMaybe "<Unnamed>" $ fst $ customTypeDefs Map.! id
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
         Error -> ""
@@ -328,30 +340,42 @@ getChildInPattern pattern index = case pattern of
 
 handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
 handleEvent appState (VtyEvent event) = case view present $ view locationHistory appState of
-    DefListView selectedId -> handleEventOnDefListView appState event selectedId
+    DefListView selectedDefKey -> handleEventOnDefListView appState event selectedDefKey
     ExprDefView location -> handleEventOnExprDefView appState event location
 
-handleEventOnDefListView :: AppState -> Vty.Event -> Id -> EventM AppResourceName (Next AppState)
-handleEventOnDefListView appState event selectedDefId = case event of
-    Vty.EvKey Vty.KEnter [] -> goToDef selectedDefId appState
-    Vty.EvKey Vty.KUp [] -> select $ fromMaybe selectedDefId maybePrevDefId
-    Vty.EvKey Vty.KDown [] -> select $ fromMaybe selectedDefId maybeNextDefId
+handleEventOnDefListView :: AppState -> Vty.Event -> DefKey -> EventM AppResourceName (Next AppState)
+handleEventOnDefListView appState event selectedDefKey = case event of
+    Vty.EvKey Vty.KEnter [] -> goToDef selectedDefKey appState
+    Vty.EvKey Vty.KUp [] -> select $ fromMaybe selectedDefKey maybePrevDefKey
+    Vty.EvKey Vty.KDown [] -> select $ fromMaybe selectedDefKey maybeNextDefKey
     Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
     Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
     Vty.EvKey (Vty.KChar 'n') [] -> addNewExprDef
     Vty.EvKey (Vty.KChar 'q') [] -> halt appState
     _ -> continue appState
     where
-        select defId = continue $ appState & locationHistory . present . _DefListView .~ defId
-        maybePrevDefId = fmap (subtract 1) maybeSelectedIndex >>= flip getItemAtIndex defIds
-        maybeNextDefId = fmap (+ 1) maybeSelectedIndex >>= flip getItemAtIndex defIds
-        maybeSelectedIndex = elemIndex selectedDefId defIds
-        defIds = Map.keys $ view exprDefs appState
+        select defKey = continue $ appState & locationHistory . present . _DefListView .~ defKey
+        maybePrevDefKey = fmap (subtract 1) maybeSelectedIndex >>= flip getItemAtIndex defKeys
+        maybeNextDefKey = fmap (+ 1) maybeSelectedIndex >>= flip getItemAtIndex defKeys
+        maybeSelectedIndex = elemIndex selectedDefKey defKeys
+        defKeys = getDefKeys appState
         addNewExprDef = liftIO createNewAppState >>= continue where
             createNewAppState = updateDerivedState $ appState
                 & exprDefs %~ Map.insert newDefId (Nothing, History.create E.Hole)
-                & locationHistory %~ (push (ExprDefView (newDefId, []))) . (present .~ DefListView newDefId)
-            newDefId = last defIds + 1
+                & locationHistory %~ (push (ExprDefView (newDefId, []))) . (present .~ DefListView (ExprDefKey newDefId))
+            newDefId = fst (Map.findMax $ view exprDefs appState) + 1
+
+getDefKeys :: AppState -> [DefKey]
+getDefKeys appState = (TypeDefKey <$> getTypeDefKeys appState) ++ (ExprDefKey <$> getExprDefIds appState)
+
+getTypeDefKeys :: AppState -> [TypeDefKey]
+getTypeDefKeys appState = (BuiltIn <$> BT.typeDefKeys) ++ (Custom <$> getCustomTypeDefIds appState)
+
+getCustomTypeDefIds :: AppState -> [Id]
+getCustomTypeDefIds = Map.keys . view customTypeDefs
+
+getExprDefIds :: AppState -> [Id]
+getExprDefIds = Map.keys . view exprDefs
 
 handleEventOnExprDefView :: AppState -> Vty.Event -> ExprDefViewLocation -> EventM AppResourceName (Next AppState)
 handleEventOnExprDefView appState event (defId, selectionPath) = case currentEditState of
@@ -398,7 +422,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
                                 let arity = length paramTypes
                                 let wildcards = replicate arity P.Wildcard
                                 return $ P.Constructor constructorKey wildcards
-                    typeDefKeys = BuiltIn <$> BT.typeDefKeys
+                    typeDefKeys = getTypeDefKeys appState
             maybeEditorExtent <- lookupExtent EditorName
             setEditState $ SelectionEditing newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
         where editorContent = head $ getEditContents editor
@@ -464,7 +488,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         selected = fromJustNote "selection path should be a valid path" $ getItemAtPath selectionPath
         getItemAtPath path = getItemAtPathInExpr path defExpr
         goToDefinition = case selected of
-            Expr (E.Def defId) | Map.member defId currentExprDefs -> goToDef defId appState
+            Expr (E.Def defId) | Map.member defId currentExprDefs -> goToExprDef defId appState
             _ -> continue appState
         initiateSelectionEdit = setEditState $ SelectionEditing initialSelectionEditor Nothing
         initialSelectionEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialSelectionEditorContent
@@ -510,8 +534,13 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         undo = liftIO (updateDerivedState $ appState & exprDefs . ix defId . _2 %~ goBack) >>= continue
         redo = liftIO (updateDerivedState $ appState & exprDefs . ix defId . _2 %~ goForward) >>= continue
 
-goToDef :: Id -> AppState -> EventM AppResourceName (Next AppState)
-goToDef id = modifyLocationHistory (push $ ExprDefView (id, []))
+goToDef :: DefKey -> AppState -> EventM AppResourceName (Next AppState)
+goToDef key = case key of
+    TypeDefKey k -> continue
+    ExprDefKey id -> goToExprDef id
+
+goToExprDef :: Id -> AppState -> EventM AppResourceName (Next AppState)
+goToExprDef id = modifyLocationHistory (push $ ExprDefView (id, []))
 
 goBackInLocationHistory :: AppState -> EventM AppResourceName (Next AppState)
 goBackInLocationHistory = modifyLocationHistory goBack
