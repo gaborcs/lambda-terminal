@@ -73,9 +73,9 @@ type TypeError = Infer.TypeError TypeDefKey
 data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
-data Location = DefListView SelectedDefId | DefView DefViewLocation
+data Location = DefListView SelectedDefId | ExprDefView ExprDefViewLocation
 type SelectedDefId = Id
-type DefViewLocation = (Id, E.Path)
+type ExprDefViewLocation = (Id, E.Path)
 data EditState = NotEditing | Naming EditorState | SelectionEditing EditorState (Maybe AutocompleteState)
 type EditorState = Editor String AppResourceName
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
@@ -142,7 +142,7 @@ app = App
 draw :: AppState -> [AppWidget]
 draw appState = case view present $ view locationHistory appState of
     DefListView selectedDefId -> drawDefListView appState selectedDefId
-    DefView defViewLocation -> drawDefView appState defViewLocation
+    ExprDefView defViewLocation -> drawExprDefView appState defViewLocation
 
 drawDefListView :: AppState -> SelectedDefId -> [AppWidget]
 drawDefListView appState selectedDefId = [ renderTitle "Definitions" <=> renderedList ] where
@@ -153,8 +153,8 @@ drawDefListView appState selectedDefId = [ renderTitle "Definitions" <=> rendere
 gray :: Vty.Color
 gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark backgrounds
 
-drawDefView :: AppState -> DefViewLocation -> [AppWidget]
-drawDefView (AppState customTypeDefs defs _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult))) (defId, selectionPath) = ui where
+drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
+drawExprDefView (AppState customTypeDefs defs _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult))) (defId, selectionPath) = ui where
     ui = case editState of
         SelectionEditing _ (Just (AutocompleteState autocompleteList editorExtent)) | autocompleteListLength > 0 ->
             [ translateBy autocompleteOffset autocomplete, layout ] where
@@ -329,7 +329,7 @@ getChildInPattern pattern index = case pattern of
 handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
 handleEvent appState (VtyEvent event) = case view present $ view locationHistory appState of
     DefListView selectedId -> handleEventOnDefListView appState event selectedId
-    DefView defViewLocation -> handleEventOnDefView appState event defViewLocation
+    ExprDefView location -> handleEventOnExprDefView appState event location
 
 handleEventOnDefListView :: AppState -> Vty.Event -> Id -> EventM AppResourceName (Next AppState)
 handleEventOnDefListView appState event selectedDefId = case event of
@@ -350,11 +350,11 @@ handleEventOnDefListView appState event selectedDefId = case event of
         addNewExprDef = liftIO createNewAppState >>= continue where
             createNewAppState = updateDerivedState $ appState
                 & exprDefs %~ Map.insert newDefId (Nothing, History.create E.Hole)
-                & locationHistory %~ (push (DefView (newDefId, []))) . (present .~ DefListView newDefId)
+                & locationHistory %~ (push (ExprDefView (newDefId, []))) . (present .~ DefListView newDefId)
             newDefId = last defIds + 1
 
-handleEventOnDefView :: AppState -> Vty.Event -> DefViewLocation -> EventM AppResourceName (Next AppState)
-handleEventOnDefView appState event (defId, selectionPath) = case currentEditState of
+handleEventOnExprDefView :: AppState -> Vty.Event -> ExprDefViewLocation -> EventM AppResourceName (Next AppState)
+handleEventOnExprDefView appState event (defId, selectionPath) = case currentEditState of
     Naming editor -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit
         Vty.EvKey Vty.KEnter [] -> commitName $ head $ getEditContents editor
@@ -450,7 +450,7 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
         navForward = nav nextSiblingPath
         nav path = case getItemAtPath path of
             Just itemAtPath -> liftIO getNewAppState >>= continue where
-                getNewAppState = updateEvalResult $ appState & locationHistory . present . _DefView . _2 .~ path
+                getNewAppState = updateEvalResult $ appState & locationHistory . present . _ExprDefView . _2 .~ path
             Nothing -> continue appState
         parentPath = if null selectionPath then [] else init selectionPath
         pathToFirstChildOfSelected = selectionPath ++ [0]
@@ -487,7 +487,7 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
         modifyExprContainingSelection modify = liftIO createNewAppState >>= continue where
             createNewAppState = updateDerivedState $ appState
                 & exprDefs . ix defId . _2 %~ push newExpr
-                & locationHistory . present . _DefView . _2 .~ pathToExprContainingSelection
+                & locationHistory . present . _ExprDefView . _2 .~ pathToExprContainingSelection
                 & editState .~ NotEditing
             newExpr = modifyAtPathInExpr pathToExprContainingSelection modify id defExpr
             pathToExprContainingSelection = dropPatternPartOfPath defExpr selectionPath
@@ -511,7 +511,7 @@ handleEventOnDefView appState event (defId, selectionPath) = case currentEditSta
         redo = liftIO (updateDerivedState $ appState & exprDefs . ix defId . _2 %~ goForward) >>= continue
 
 goToDef :: Id -> AppState -> EventM AppResourceName (Next AppState)
-goToDef id = modifyLocationHistory (push $ DefView (id, []))
+goToDef id = modifyLocationHistory (push $ ExprDefView (id, []))
 
 goBackInLocationHistory :: AppState -> EventM AppResourceName (Next AppState)
 goBackInLocationHistory = modifyLocationHistory goBack
@@ -597,17 +597,17 @@ updateDerivedState appState = do
     let getCurrentTypeDef = getTypeDef $ view customTypeDefs appState
     let currentExprDefs = view present . snd <$> view exprDefs appState
     let location = view present $ view locationHistory appState
-    newDerivedState <- traverse (createDerivedState getCurrentTypeDef currentExprDefs) (preview _DefView location)
+    newDerivedState <- traverse (createDerivedState getCurrentTypeDef currentExprDefs) (preview _ExprDefView location)
     return $ appState & derivedState .~ newDerivedState
 
 updateEvalResult :: AppState -> IO AppState
 updateEvalResult appState = do
     let defExprs = view present . snd <$> view exprDefs appState
     let location = view present $ view locationHistory appState
-    newEvalResult <- traverse (createEvalResult defExprs) (preview _DefView location)
+    newEvalResult <- traverse (createEvalResult defExprs) (preview _ExprDefView location)
     return $ appState & derivedState . _Just . evalResult %~ flip fromMaybe newEvalResult
 
-createDerivedState :: (TypeDefKey -> TypeDef) -> Map.Map Id Expr -> DefViewLocation -> IO DerivedState
+createDerivedState :: (TypeDefKey -> TypeDef) -> Map.Map Id Expr -> ExprDefViewLocation -> IO DerivedState
 createDerivedState getTypeDef defs location@(exprName, _) =
     DerivedState (createInferResult getTypeDef defs exprName) <$> createEvalResult defs location
 
@@ -619,7 +619,7 @@ getTypeDef customTypeDefs key = case key of
     BuiltIn k -> BT.getTypeDef k & T.dataConstructors %~ fmap (fmap BuiltIn)
     Custom id -> view present . snd $ customTypeDefs Map.! id
 
-createEvalResult :: Map.Map Id Expr -> DefViewLocation -> IO EvalResult
+createEvalResult :: Map.Map Id Expr -> ExprDefViewLocation -> IO EvalResult
 createEvalResult defs (defId, selectionPath) = do
     let maybeDef = Map.lookup defId defs
     let maybeSelected = maybeDef >>= getItemAtPathInExpr selectionPath
