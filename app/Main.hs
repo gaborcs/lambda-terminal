@@ -168,7 +168,7 @@ gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark ba
 
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
 drawExprDefView appState (defId, selectionPath) = ui where
-    AppState customTypeDefs defs _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult)) = appState
+    AppState _ defs _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult)) = appState
     ui = case editState of
         SelectionEditing _ (Just (AutocompleteState autocompleteList editorExtent)) | autocompleteListLength > 0 ->
             [ translateBy autocompleteOffset autocomplete, layout ] where
@@ -268,7 +268,7 @@ renderAlternative appState (RenderChild renderChild) alternativeIndex (patt, exp
         (exprResultType, renderedExpr) = renderChild (2 * alternativeIndex + 1) $ renderExpr appState expr
 
 renderPattern :: Pattern -> Renderer
-renderPattern patt wrappingStyle (RenderChild renderChild) = case patt of
+renderPattern patt _ (RenderChild renderChild) = case patt of
     P.Wildcard -> (OneWord, str "_")
     P.Var var -> (OneWord, str var)
     P.Constructor key children -> (resultType, hBox $ intersperse (str " ") (str name : renderedChildren)) where
@@ -337,9 +337,11 @@ getChildInPattern patt index = case patt of
     _ -> Nothing
 
 handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
-handleEvent appState (VtyEvent event) = case view present $ view locationHistory appState of
-    DefListView selectedDefKey -> handleEventOnDefListView appState event selectedDefKey
-    ExprDefView location -> handleEventOnExprDefView appState event location
+handleEvent appState brickEvent = case brickEvent of
+    VtyEvent event -> case view present $ view locationHistory appState of
+        DefListView selectedDefKey -> handleEventOnDefListView appState event selectedDefKey
+        ExprDefView location -> handleEventOnExprDefView appState event location
+    _ -> continue appState
 
 handleEventOnDefListView :: AppState -> Vty.Event -> DefKey -> EventM AppResourceName (Next AppState)
 handleEventOnDefListView appState event selectedDefKey = case event of
@@ -470,10 +472,8 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         navToChild = nav pathToFirstChildOfSelected
         navBackward = nav prevSiblingPath
         navForward = nav nextSiblingPath
-        nav path = case getItemAtPath path of
-            Just itemAtPath -> liftIO getNewAppState >>= continue where
-                getNewAppState = updateEvalResult $ appState & locationHistory . present . _ExprDefView . _2 .~ path
-            Nothing -> continue appState
+        nav path = if isJust $ getItemAtPath path then liftIO getNewAppState >>= continue else continue appState where
+            getNewAppState = updateEvalResult $ appState & locationHistory . present . _ExprDefView . _2 .~ path
         parentPath = if null selectionPath then [] else init selectionPath
         pathToFirstChildOfSelected = selectionPath ++ [0]
         prevSiblingPath = if null selectionPath then [] else init selectionPath ++ [mod (last selectionPath - 1) siblingCount]
@@ -534,7 +534,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
 
 goToDef :: DefKey -> AppState -> EventM AppResourceName (Next AppState)
 goToDef key = case key of
-    TypeDefKey k -> continue
+    TypeDefKey _ -> continue
     ExprDefKey id -> goToExprDef id
 
 goToExprDef :: Id -> AppState -> EventM AppResourceName (Next AppState)
@@ -603,8 +603,8 @@ dropPatternPartOfPath expr path = case path of
     [] -> []
     edge:restOfPath -> case expr of
         E.Fn alts -> if even edge then [] else edge : dropPatternPartOfPath (snd $ alts NonEmpty.!! div edge 2) restOfPath
-        E.Call callee arg | edge == 0 -> 0 : dropPatternPartOfPath callee restOfPath
-        E.Call callee arg | edge == 1 -> 1 : dropPatternPartOfPath arg restOfPath
+        E.Call callee _ | edge == 0 -> 0 : dropPatternPartOfPath callee restOfPath
+        E.Call _ arg | edge == 1 -> 1 : dropPatternPartOfPath arg restOfPath
         _ -> error "invalid path"
 
 addAlternativeAtPath :: E.Path -> E.Expr d c -> Maybe (E.Expr d c)

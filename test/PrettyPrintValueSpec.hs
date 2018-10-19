@@ -2,7 +2,6 @@ module PrettyPrintValueSpec where
 
 import Test.Hspec
 import PrettyPrintValue
-import qualified Expr as E
 import qualified Value as V
 
 spec :: Spec

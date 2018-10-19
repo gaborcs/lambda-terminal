@@ -3,8 +3,6 @@ module PrettyPrintType (prettyPrintType) where
 import Control.Monad
 import qualified Type as T
 
-type IsComplex = Bool
-
 prettyPrintType :: (t -> String) -> T.Type t -> String
 prettyPrintType getName t = case t of
     T.Var varId -> typeVarNames !! varId

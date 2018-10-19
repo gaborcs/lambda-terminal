@@ -4,7 +4,6 @@ module BuiltInTypes where
 
 import Control.DeepSeq
 import GHC.Generics
-import Data.List
 import Type
 
 data TypeDefKey

@@ -6,7 +6,7 @@
         {
             "label": "test",
             "type": "shell",
-            "command": "stack test",
+            "command": "stack test --ghc-options=\"-W\"",
             "group": {
                 "kind": "test",
                 "isDefault": true
@@ -16,7 +16,7 @@
         {
             "label": "exec",
             "type": "shell",
-            "command": "stack build --exec lambda-terminal-exe",
+            "command": "stack build --exec lambda-terminal-exe --ghc-options=\"-W\"",
             "group": {
                 "kind": "build",
                 "isDefault": true
