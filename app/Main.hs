@@ -72,7 +72,7 @@ type TypeError = Infer.TypeError TypeDefKey
 data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
-data Location = DefListView SelectedDefKey | ExprDefView ExprDefViewLocation
+data Location = DefListView SelectedDefKey | TypeDefView TypeDefKey | ExprDefView ExprDefViewLocation
 type SelectedDefKey = DefKey
 data DefKey = TypeDefKey TypeDefKey | ExprDefKey Id deriving Eq
 type ExprDefViewLocation = (Id, E.Path)
@@ -142,6 +142,7 @@ app = App
 draw :: AppState -> [AppWidget]
 draw appState = case view present $ view locationHistory appState of
     DefListView selectedDefId -> drawDefListView appState selectedDefId
+    TypeDefView typeDefKey -> drawTypeDefView appState typeDefKey
     ExprDefView defViewLocation -> drawExprDefView appState defViewLocation
 
 drawDefListView :: AppState -> SelectedDefKey -> [AppWidget]
@@ -165,6 +166,15 @@ getExprName appState id = fromMaybe "unnamed" $ fst $ view exprDefs appState Map
 
 gray :: Vty.Color
 gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark backgrounds
+
+drawTypeDefView :: AppState -> TypeDefKey -> [AppWidget]
+drawTypeDefView appState typeDefKey = [ title <=> vBox renderedDataConstructors ] where
+    title = renderTitle $ getTypeName appState typeDefKey
+    renderedDataConstructors = renderDataConstructor <$> dataConstructors
+    renderDataConstructor (T.DataConstructor name paramTypes) = str $ unwords $ name : printedParamTypes where
+        printedParamTypes = printParamType <$> paramTypes
+        printParamType t = inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) varNames t)
+    T.TypeDef varNames dataConstructors = getTypeDef (view customTypeDefs appState) typeDefKey
 
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
 drawExprDefView appState (defId, selectionPath) = ui where
@@ -190,7 +200,7 @@ drawExprDefView appState (defId, selectionPath) = ui where
     maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
-        Just t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) t
+        Just t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) defaultTypeVarNames t
         Nothing -> "Type error"
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
@@ -340,6 +350,7 @@ handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppSta
 handleEvent appState brickEvent = case brickEvent of
     VtyEvent event -> case view present $ view locationHistory appState of
         DefListView selectedDefKey -> handleEventOnDefListView appState event selectedDefKey
+        TypeDefView typeDefKey -> handleEventOnTypeDefView appState event typeDefKey
         ExprDefView location -> handleEventOnExprDefView appState event location
     _ -> continue appState
 
@@ -376,6 +387,13 @@ getCustomTypeDefIds = Map.keys . view customTypeDefs
 
 getExprDefIds :: AppState -> [Id]
 getExprDefIds = Map.keys . view exprDefs
+
+handleEventOnTypeDefView :: AppState -> Vty.Event -> TypeDefKey -> EventM AppResourceName (Next AppState)
+handleEventOnTypeDefView appState event _ = case event of
+    Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
+    Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
+    Vty.EvKey (Vty.KChar 'q') [] -> halt appState
+    _ -> continue appState
 
 handleEventOnExprDefView :: AppState -> Vty.Event -> ExprDefViewLocation -> EventM AppResourceName (Next AppState)
 handleEventOnExprDefView appState event (defId, selectionPath) = case currentEditState of
@@ -534,11 +552,14 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
 
 goToDef :: DefKey -> AppState -> EventM AppResourceName (Next AppState)
 goToDef key = case key of
-    TypeDefKey _ -> continue
+    TypeDefKey k -> goToTypeDef k
     ExprDefKey id -> goToExprDef id
 
+goToTypeDef :: TypeDefKey -> AppState -> EventM AppResourceName (Next AppState)
+goToTypeDef key = modifyLocationHistory $ push $ TypeDefView key
+
 goToExprDef :: Id -> AppState -> EventM AppResourceName (Next AppState)
-goToExprDef id = modifyLocationHistory (push $ ExprDefView (id, []))
+goToExprDef id = modifyLocationHistory $ push $ ExprDefView (id, [])
 
 goBackInLocationHistory :: AppState -> EventM AppResourceName (Next AppState)
 goBackInLocationHistory = modifyLocationHistory goBack

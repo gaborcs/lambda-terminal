@@ -1,21 +1,21 @@
-module PrettyPrintType (prettyPrintType) where
+module PrettyPrintType where
 
 import Control.Lens.Extras
 import Control.Monad
 import Util
 import qualified Type as T
 
-prettyPrintType :: (t -> String) -> T.Type t -> String
-prettyPrintType getName t = case t of
+prettyPrintType :: (t -> String) -> [String] -> T.Type t -> String
+prettyPrintType getTypeName typeVarNames t = case t of
     T.Var varId -> typeVarNames !! varId
     T.Fn paramType resultType -> inParensIf (is T._Fn paramType) (print paramType) ++ " -> " ++ print resultType
-    T.Constructor typeDefKey children -> unwords $ getName typeDefKey : fmap printChild children where
+    T.Constructor typeDefKey children -> unwords $ getTypeName typeDefKey : fmap printChild children where
         printChild child = inParensIf (isMultiWord child) (print child)
     T.Int -> "Int"
-    where print = prettyPrintType getName
+    where print = prettyPrintType getTypeName typeVarNames
 
-typeVarNames :: [String]
-typeVarNames = [1..] >>= flip replicateM ['a'..'z']
+defaultTypeVarNames :: [String]
+defaultTypeVarNames = [1..] >>= flip replicateM ['a'..'z']
 
 isMultiWord :: T.Type t -> Bool
 isMultiWord t = case t of
