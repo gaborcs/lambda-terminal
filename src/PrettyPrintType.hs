@@ -2,17 +2,17 @@ module PrettyPrintType (prettyPrintType) where
 
 import Control.Lens.Extras
 import Control.Monad
+import Util
 import qualified Type as T
 
 prettyPrintType :: (t -> String) -> T.Type t -> String
 prettyPrintType getName t = case t of
     T.Var varId -> typeVarNames !! varId
-    T.Fn paramType resultType -> withParensIf (is T._Fn) paramType ++ " -> " ++ prettyPrintType getName resultType
-    T.Constructor typeDefKey types -> unwords $ getName typeDefKey : fmap (withParensIf isMultiWord) types
+    T.Fn paramType resultType -> inParensIf (is T._Fn paramType) (print paramType) ++ " -> " ++ print resultType
+    T.Constructor typeDefKey children -> unwords $ getName typeDefKey : fmap printChild children where
+        printChild child = inParensIf (isMultiWord child) (print child)
     T.Int -> "Int"
-    where
-        withParensIf pred t = if pred t then "(" ++ s ++ ")" else s where
-            s = prettyPrintType getName t
+    where print = prettyPrintType getName
 
 typeVarNames :: [String]
 typeVarNames = [1..] >>= flip replicateM ['a'..'z']
