@@ -98,13 +98,13 @@ inferAlternative :: (Ord d, PrimitiveType t)
     -> TypeEnv t
     -> E.Alternative d c
     -> Infer (IntermediateTree t, IntermediateTree t)
-inferAlternative instantiateConstructorType defs env (pattern, expr) = do
-    (patternTree, patternTypeEnv) <- inferPattern instantiateConstructorType pattern
+inferAlternative instantiateConstructorType defs env (patt, expr) = do
+    (patternTree, patternTypeEnv) <- inferPattern instantiateConstructorType patt
     exprTree <- infer instantiateConstructorType defs (Map.union patternTypeEnv env) expr
     return (patternTree, exprTree)
 
 inferPattern :: (c -> Maybe (Infer (T.Type t))) -> P.Pattern c -> Infer (IntermediateTree t, TypeEnv t)
-inferPattern instantiateConstructorType pattern = case pattern of
+inferPattern instantiateConstructorType patt = case patt of
     P.Wildcard -> do
         tv <- freshTVar
         return (TypedIntermediate $ TypedIntermediateTree tv [] [], Map.empty)
@@ -173,7 +173,7 @@ unify t1 t2 = case (t1, t2) of
         return $ compose s2 s1
     (T.Constructor tDef1 ts1, T.Constructor tDef2 ts2) -> if tDef1 == tDef2 then maybeSubst else Nothing where
         maybeSubst = foldl compose Map.empty <$> maybeSubsts
-        maybeSubsts = sequence $ zipWith unify ts1 ts2
+        maybeSubsts = zipWithM unify ts1 ts2
     (T.Int, T.Int) -> Just Map.empty
     _ -> Nothing
 

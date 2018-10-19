@@ -129,7 +129,7 @@ replaceKeysInExpr modifyDefKey modifyConstructorKey expr = case expr of
     E.Primitive p -> E.Primitive p
     where
         replaceInExpr = replaceKeysInExpr modifyDefKey modifyConstructorKey
-        replaceInAlt (pattern, expr) = (fmap modifyConstructorKey pattern, replaceInExpr expr)
+        replaceInAlt (patt, expr) = (fmap modifyConstructorKey patt, replaceInExpr expr)
 
 app :: App AppState e AppResourceName
 app = App
@@ -184,7 +184,7 @@ drawExprDefView appState (defId, selectionPath) = ui where
             prompt = str $ if isJust maybeDefName then "Rename to: " else "Name to: "
         _ -> renderTitle $ fromMaybe "unnamed" maybeDefName
     (maybeDefName, defHistory) = defs Map.! defId
-    coloredExpr = modifyDefAttr (flip Vty.withForeColor gray) renderedExpr -- unselected parts of the expression are gray
+    coloredExpr = modifyDefAttr (`Vty.withForeColor` gray) renderedExpr -- unselected parts of the expression are gray
     expr = view present defHistory
     (_, renderedExpr) = renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError (renderExpr appState expr)
     maybeTypeError = preview Infer._TypeError inferResult
@@ -259,16 +259,16 @@ withParensIf :: Bool -> Widget n -> Widget n
 withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
 renderAlternative :: AppState -> RenderChild -> Int -> Alternative -> RenderResult
-renderAlternative appState (RenderChild renderChild) alternativeIndex (pattern, expr) =
+renderAlternative appState (RenderChild renderChild) alternativeIndex (patt, expr) =
     if exprResultType == MultiLine
     then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
     else (OneLine, renderedPattern <+> str " -> " <+> renderedExpr)
     where
-        (_, renderedPattern) = renderChild (2 * alternativeIndex) $ renderPattern pattern
+        (_, renderedPattern) = renderChild (2 * alternativeIndex) $ renderPattern patt
         (exprResultType, renderedExpr) = renderChild (2 * alternativeIndex + 1) $ renderExpr appState expr
 
 renderPattern :: Pattern -> Renderer
-renderPattern pattern wrappingStyle (RenderChild renderChild) = case pattern of
+renderPattern patt wrappingStyle (RenderChild renderChild) = case patt of
     P.Wildcard -> (OneWord, str "_")
     P.Var var -> (OneWord, str var)
     P.Constructor key children -> (resultType, hBox $ intersperse (str " ") (str name : renderedChildren)) where
@@ -318,21 +318,21 @@ getItemAtPathInSelectable path selectable = case path of
 
 getChildInSelectable :: Selectable -> E.ChildIndex -> Maybe Selectable
 getChildInSelectable selectable = case selectable of
-    Expr expr -> getChildInExpr expr
-    Pattern pattern -> getChildInPattern pattern
+    Expr e -> getChildInExpr e
+    Pattern p -> getChildInPattern p
 
 getChildInExpr :: Expr -> E.ChildIndex -> Maybe Selectable
 getChildInExpr expr index = case (expr, index) of
     (E.Fn alternatives, _) -> do
         let altIndex = div index 2
-        (pattern, expr) <- getItemAtIndex altIndex (NonEmpty.toList alternatives)
-        return $ if even index then Pattern pattern else Expr expr
+        (patt, expr) <- getItemAtIndex altIndex (NonEmpty.toList alternatives)
+        return $ if even index then Pattern patt else Expr expr
     (E.Call callee _, 0) -> Just $ Expr callee
     (E.Call _ arg, 1) -> Just $ Expr arg
     _ -> Nothing
 
 getChildInPattern :: Pattern -> E.ChildIndex -> Maybe Selectable
-getChildInPattern pattern index = case pattern of
+getChildInPattern patt index = case patt of
     P.Constructor _ patterns -> Pattern <$> getItemAtIndex index patterns
     _ -> Nothing
 
@@ -360,7 +360,7 @@ handleEventOnDefListView appState event selectedDefKey = case event of
         addNewExprDef = liftIO createNewAppState >>= continue where
             createNewAppState = updateDerivedState $ appState
                 & exprDefs %~ Map.insert newDefId (Nothing, History.create E.Hole)
-                & locationHistory %~ (push (ExprDefView (newDefId, []))) . (present .~ DefListView (ExprDefKey newDefId))
+                & locationHistory %~ push (ExprDefView (newDefId, [])) . (present .~ DefListView (ExprDefKey newDefId))
             newDefId = fst (Map.findMax $ view exprDefs appState) + 1
 
 getDefKeys :: AppState -> [DefKey]
@@ -396,7 +396,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
                 _ -> handleEditorEvent event editor
             let newEditorContent = head $ getEditContents newEditor
             let editorContentChanged = newEditorContent /= editorContent
-            let isSimilarToEditorContent str = isInfixOf (map toLower newEditorContent) (map toLower str)
+            let isSimilarToEditorContent str = map toLower newEditorContent `isInfixOf` map toLower str
             let isMatch = isSimilarToEditorContent . printAutocompleteItem getCurrentExprName
             newAutocompleteList <- case maybeAutocompleteState of
                 Just (AutocompleteState autocompleteList _) | not editorContentChanged -> ListWidget.handleListEvent event autocompleteList
@@ -498,7 +498,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         commitAutocompleteSelection (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
             Just (_, selectedItem) -> modifyDef $ case selectedItem of
                 Expr expr -> modifySelected (const expr) id
-                Pattern pattern -> modifySelected id (const pattern)
+                Pattern patt -> modifySelected id (const patt)
             _ -> continue appState
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern defExpr
@@ -525,8 +525,8 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         getNext current = if current == maxBound then minBound else succ current
         getPrev current = if current == minBound then maxBound else pred current
         copy = continue $ appState & clipboard %~ case selected of
-            Expr e -> clipboardExpr .~ Just e
-            Pattern p -> clipboardPattern .~ Just p
+            Expr e -> clipboardExpr ?~ e
+            Pattern p -> clipboardPattern ?~ p
         paste = modifyDef $ modifySelected (maybe id const exprClipboard) (maybe id const patternClipboard)
         Clipboard exprClipboard patternClipboard = currentClipboard
         undo = liftIO (updateDerivedState $ appState & exprDefs . ix defId . _2 %~ goBack) >>= continue
@@ -565,8 +565,8 @@ getVarsAtPath :: E.Path -> E.Expr d c -> [E.VarName]
 getVarsAtPath path expr = case path of
     [] -> []
     edge:restOfPath -> case expr of
-        E.Fn alts | odd edge -> getVars pattern ++ getVarsAtPath restOfPath body where
-            (pattern, body) = alts NonEmpty.!! div edge 2
+        E.Fn alts | odd edge -> getVars patt ++ getVarsAtPath restOfPath body where
+            (patt, body) = alts NonEmpty.!! div edge 2
         E.Call callee _ | edge == 0 -> getVarsAtPath restOfPath callee
         E.Call _ arg | edge == 1 -> getVarsAtPath restOfPath arg
         _ -> error "invalid path"
@@ -581,10 +581,10 @@ modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
     [] -> modifyExpr expr
     edge:restOfPath -> case expr of
         E.Fn alts -> E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
-            modifyAlt (pattern, expr) =
+            modifyAlt (patt, expr) =
                 if even edge
-                then (modifyAtPathInPattern restOfPath modifyPattern pattern, expr)
-                else (pattern, modifyAtPathInExpr restOfPath modifyExpr modifyPattern expr)
+                then (modifyAtPathInPattern restOfPath modifyPattern patt, expr)
+                else (patt, modifyAtPathInExpr restOfPath modifyExpr modifyPattern expr)
         E.Call callee arg | edge == 0 ->
             E.Call (modifyAtPathInExpr restOfPath modifyExpr modifyPattern callee) arg
         E.Call callee arg | edge == 1 ->
@@ -592,9 +592,9 @@ modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
         _ -> error "invalid path"
 
 modifyAtPathInPattern :: E.Path -> (P.Pattern t -> P.Pattern t) -> P.Pattern t -> P.Pattern t
-modifyAtPathInPattern path modify pattern = case path of
-    [] -> modify pattern
-    edge:restOfPath -> case pattern of
+modifyAtPathInPattern path modify patt = case path of
+    [] -> modify patt
+    edge:restOfPath -> case patt of
         P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (modifyAtPathInPattern restOfPath modify) children
         _ -> error "invalid path"
 
@@ -611,7 +611,7 @@ addAlternativeAtPath :: E.Path -> E.Expr d c -> Maybe (E.Expr d c)
 addAlternativeAtPath selectionPath expr = case (expr, selectionPath) of
     (E.Fn alts, edge:restOfPath) | odd edge -> case addAlternativeAtPath restOfPath (snd $ alts NonEmpty.!! altIndex) of
         Just expr -> Just $ E.Fn $ modifyItemAtIndexInNonEmpty altIndex modifyAlt alts where
-            modifyAlt (pattern, _) = (pattern, expr)
+            modifyAlt (patt, _) = (patt, expr)
         _ -> Just $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)
         where altIndex = div edge 2
     (E.Fn alts, _) -> Just $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)
