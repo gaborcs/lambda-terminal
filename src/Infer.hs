@@ -28,7 +28,7 @@ data InfiniteType = InfiniteType
 makePrisms ''InferResult
 makePrisms ''IntermediateTree
 
-inferType :: (Eq t, Ord d, PrimitiveType t)
+inferType :: (Eq t, Ord d)
     => (c -> Maybe (T.Type t))
     -> Map.Map d (E.Expr d c)
     -> E.Expr d c
@@ -37,7 +37,7 @@ inferType getConstructorType defs expr = solve intermediateTree where
     intermediateTree = evalState (infer instantiateConstructorType (Map.map Right defs) Map.empty expr) 0
     instantiateConstructorType key = instantiate <$> getConstructorType key
 
-infer :: (Ord d, PrimitiveType t)
+infer :: Ord d
     => (c -> Maybe (Infer (T.Type t)))
     -> Map.Map d (Either (T.Type t) (E.Expr d c))
     -> TypeEnv t
@@ -90,9 +90,11 @@ infer instantiateConstructorType defs env expr = case expr of
             return $ TypedIntermediate $ TypedIntermediateTree t [] []
         Nothing -> return $ UntypedIntermediate []
     E.Int _ -> return $ TypedIntermediate $ TypedIntermediateTree T.Int [] []
-    E.Primitive p -> return $ TypedIntermediate $ TypedIntermediateTree (getType p) [] []
+    E.Primitive p -> do
+        t <- instantiate $ getType p
+        return $ TypedIntermediate $ TypedIntermediateTree t [] []
 
-inferAlternative :: (Ord d, PrimitiveType t)
+inferAlternative :: Ord d
     => (c -> Maybe (Infer (T.Type t)))
     -> Map.Map d (Either (T.Type t) (E.Expr d c))
     -> TypeEnv t

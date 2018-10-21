@@ -8,10 +8,10 @@ import qualified Expr as E
 import qualified Pattern as P
 import qualified Value as V
 
-eval :: (Eq c, Ord d, PrimitiveValue c) => Map.Map d (E.Expr d c) -> E.Expr d c -> Maybe (V.Value c)
+eval :: (Eq c, Ord d) => Map.Map d (E.Expr d c) -> E.Expr d c -> Maybe (V.Value c)
 eval = eval' Map.empty
 
-eval' :: (Eq c, Ord d, PrimitiveValue c) => V.Env c -> Map.Map d (E.Expr d c) -> E.Expr d c -> Maybe (V.Value c)
+eval' :: (Eq c, Ord d) => V.Env c -> Map.Map d (E.Expr d c) -> E.Expr d c -> Maybe (V.Value c)
 eval' env defs expr = case expr of
     E.Hole -> Nothing
     E.Def defId -> Map.lookup defId defs >>= eval' env defs

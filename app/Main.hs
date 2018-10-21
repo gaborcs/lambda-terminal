@@ -97,11 +97,6 @@ makeLenses ''DerivedState
 makePrisms ''Location
 makePrisms ''Selectable
 
-instance PrimitiveType TypeDefKey where
-    getType = fmap BuiltIn . getPrimitiveType
-instance PrimitiveValue DataConstructorKey where
-    getValue = getPrimitiveValue BuiltIn
-
 main :: IO AppState
 main = getInitialState >>= defaultMain app
 

@@ -2,12 +2,11 @@
 
 module Primitive where
 
-import qualified BuiltInTypes
 import qualified Type as T
 import qualified Value as V
 
 data Primitive
-    = Equals
+    = IfZero
     | Plus
     | Minus
     | Times
@@ -15,35 +14,26 @@ data Primitive
 
 getDisplayName :: Primitive -> String
 getDisplayName p = case p of
-    Equals -> "="
+    IfZero -> "ifZero"
     Plus -> "+"
     Minus -> "-"
     Times -> "*"
 
-getPrimitiveType :: Primitive -> T.Type BuiltInTypes.TypeDefKey
-getPrimitiveType p = case p of
-    Equals -> binaryIntOpType $ T.Constructor BuiltInTypes.Bool []
+getType :: Primitive -> T.Type t
+getType p = case p of
+    IfZero -> T.Fn T.Int $ T.Fn (T.Var 0) $ T.Fn (T.Var 0) (T.Var 0)
     Plus -> binaryIntOpType T.Int
     Minus -> binaryIntOpType T.Int
     Times -> binaryIntOpType T.Int
 
-getPrimitiveValue :: (BuiltInTypes.TypeDefKey -> t) -> Primitive -> V.Value (T.DataConstructorKey t)
-getPrimitiveValue modifyTypeDefKey p = case p of
-    Equals -> binaryIntOpValue $ \a b ->
-        V.Constructor (T.DataConstructorKey (modifyTypeDefKey BuiltInTypes.Bool) $ if a == b then "True" else "False") []
+getValue :: Primitive -> V.Value c
+getValue p = case p of
+    IfZero -> V.Fn $ \maybeN -> Just $ V.Fn $ \maybeThen -> Just $ V.Fn $ \maybeElse -> case maybeN of
+        Just (V.Int 0) -> maybeThen
+        _ -> maybeElse
     Plus -> binaryIntOpValue $ \a b -> V.Int (a + b)
     Minus -> binaryIntOpValue $ \a b -> V.Int (a - b)
     Times -> binaryIntOpValue $ \a b -> V.Int (a * b)
-
-class PrimitiveType t where
-    getType :: Primitive -> T.Type t
-class PrimitiveValue c where
-    getValue :: Primitive -> V.Value c
-
-instance PrimitiveType BuiltInTypes.TypeDefKey where
-    getType = getPrimitiveType
-instance PrimitiveValue BuiltInTypes.DataConstructorKey where
-    getValue = getPrimitiveValue id
 
 binaryIntOpType :: T.Type t -> T.Type t
 binaryIntOpType resultType = T.Fn T.Int $ T.Fn T.Int resultType
