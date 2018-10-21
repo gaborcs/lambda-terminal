@@ -11,7 +11,7 @@ data Primitive
     | Plus
     | Minus
     | Times
-    deriving (Eq, Show, Bounded, Enum)
+    deriving (Eq, Read, Show, Bounded, Enum)
 
 getDisplayName :: Primitive -> String
 getDisplayName p = case p of

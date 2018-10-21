@@ -11,7 +11,7 @@ data TypeDefKey
     | Maybe
     | List
     | InfList
-    deriving (Eq, Show, Enum, Bounded, Generic, NFData)
+    deriving (Eq, Read, Show, Enum, Bounded, Generic, NFData)
 
 getTypeDef :: TypeDefKey -> TypeDef TypeDefKey
 getTypeDef key = case key of

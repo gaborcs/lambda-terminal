@@ -17,7 +17,7 @@ data Expr defKey constructorKey
     | Constructor constructorKey
     | Int Int
     | Primitive Primitive
-    deriving (Eq, Show)
+    deriving (Eq, Read, Show)
 
 -- shortcut for creating functions with a single alternative
 fn :: VarName -> Expr d c -> Expr d c

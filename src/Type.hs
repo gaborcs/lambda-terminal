@@ -30,7 +30,7 @@ data DataConstructor typeDefKey = DataConstructor
 data DataConstructorKey typeDefKey = DataConstructorKey
     { _typeDefKey :: typeDefKey
     , _constructorName :: String
-    } deriving (Eq, Show, Generic, NFData)
+    } deriving (Eq, Read, Show, Generic, NFData)
 
 makePrisms ''Type
 makeLenses ''TypeDef

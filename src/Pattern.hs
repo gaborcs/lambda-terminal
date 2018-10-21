@@ -10,4 +10,4 @@ data Pattern constructorKey
     | Var VarName
     | Constructor constructorKey [Pattern constructorKey]
     | Int Int
-    deriving (Eq, Show, Functor)
+    deriving (Eq, Read, Show, Functor)
