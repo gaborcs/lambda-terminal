@@ -16,7 +16,7 @@
         {
             "label": "exec",
             "type": "shell",
-            "command": "stack build --exec 'lambda-terminal-exe ../lambda-codebase/' --ghc-options='-W'",
+            "command": "stack build --exec 'lambda-terminal ../lambda-codebase/' --ghc-options='-W'",
             "group": {
                 "kind": "build",
                 "isDefault": true
