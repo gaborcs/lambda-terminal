@@ -480,9 +480,14 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         currentEditState = view editState appState
         initiateRename = setEditState $ Naming initialRenameEditor
         initialRenameEditor = applyEdit gotoEOL $ editor EditorName (Just 1) $ fromMaybe "" maybeDefName
-        commitName newName = continue $ appState
-            & exprDefs . ix defId . _1 .~ (if null newName then Nothing else Just newName)
-            & editState .~ NotEditing
+        commitName newName = continue $ case newName of
+            firstChar : restOfChars | isLower firstChar && all isAlphaNum restOfChars -> appState
+                & exprDefs . ix defId . _1 ?~ newName
+                & editState .~ NotEditing
+            "" -> appState
+                & exprDefs . ix defId . _1 .~ Nothing
+                & editState .~ NotEditing
+            _ -> appState
         navToParent = nav parentPath
         navToChild = nav pathToFirstChildOfSelected
         navBackward = nav prevSiblingPath
@@ -507,9 +512,12 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         initialSelectionEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialSelectionEditorContent
         initialSelectionEditorContent = printAutocompleteItem getCurrentExprName selected
         cancelEdit = setEditState NotEditing
-        commitEditorContent editorContent = modifyDef $ case readMaybe editorContent of
-            Just int -> replaceSelected (E.Int int) (P.Int int)
-            Nothing -> replaceSelected (E.Var editorContent) (P.Var editorContent)
+        commitEditorContent editorContent = case readMaybe editorContent of
+            Just int -> modifyDef $ replaceSelected (E.Int int) (P.Int int)
+            Nothing -> case editorContent of
+                firstChar : restOfChars | isAlpha firstChar && all isAlphaNum restOfChars ->
+                    modifyDef $ replaceSelected (E.Var editorContent) (P.Var editorContent)
+                _ -> continue appState
         commitAutocompleteSelection (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
             Just (_, selectedItem) -> modifyDef $ case selectedItem of
                 Expr expr -> modifySelected (const expr) id
