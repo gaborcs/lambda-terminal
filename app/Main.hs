@@ -217,7 +217,7 @@ renderAutocompleteItem isSelected text = color $ padRight Max $ str text where
 
 renderWithAttrs :: WrappingStyle -> EditState -> Selection -> Maybe TypeError -> Renderer -> RenderResult
 renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case editState of
-    SelectionEditing editor _ | selected -> (OneWord, visible . highlight $ hLimit (length editStr + 1) renderedEditor) where
+    SelectionEditing editor _ | selected -> (OneWord, visible . highlight $ hLimit (textWidth editStr + 1) renderedEditor) where
         editStr = head $ getEditContents editor
         renderedEditor = renderEditor (str . head) True editor
     _ -> (renderResultType, (if selected then visible . highlight else id) $ makeRedIfNeeded widget)
