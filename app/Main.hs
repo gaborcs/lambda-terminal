@@ -456,7 +456,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         Vty.EvKey (Vty.KChar 'l') [] -> navForward
         Vty.EvKey (Vty.KChar 'e') [] -> initiateSelectionEdit
         Vty.EvKey (Vty.KChar ' ') [] -> callSelected
-        Vty.EvKey (Vty.KChar 'a') [] -> applyFnToSelected
+        Vty.EvKey Vty.KBS [] -> applyFnToSelected
         Vty.EvKey (Vty.KChar 'λ') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar '|') [] -> addAlternativeToSelected
