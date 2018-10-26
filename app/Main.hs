@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Main where
@@ -12,7 +11,6 @@ import Data.Char
 import Data.List
 import Data.Maybe
 import Data.Text.Zipper
-import GHC.Generics
 import System.Environment
 import System.IO.Error
 import System.Timeout
@@ -33,7 +31,6 @@ import qualified Data.Vector as Vec
 import qualified Brick.Types
 import qualified Brick.Widgets.List as ListWidget
 import qualified Graphics.Vty as Vty
-import qualified BuiltInTypes as BT
 import qualified Expr as E
 import qualified Infer
 import qualified Pattern as P
@@ -41,7 +38,7 @@ import qualified Type as T
 import qualified Value as V
 
 data AppState = AppState
-    { _customTypeDefs :: Map.Map Id (Maybe Name, History TypeDef)
+    { _typeDefs :: Map.Map Id (Maybe Name, History TypeDef)
     , _exprDefs :: Map.Map Id (Maybe Name, History Expr)
     , _locationHistory :: History Location
     , _wrappingStyle :: WrappingStyle
@@ -60,7 +57,7 @@ data DerivedState = DerivedState
 type Id = Int
 type Name = String
 type TypeDef = T.TypeDef TypeDefKey
-data TypeDefKey = BuiltIn BT.TypeDefKey | Custom Id deriving (Eq, Read, Show, Generic, NFData)
+type TypeDefKey = Int
 type Expr = E.Expr Id DataConstructorKey
 type DataConstructorKey = T.DataConstructorKey TypeDefKey
 type Alternative = E.Alternative Id DataConstructorKey
@@ -73,7 +70,7 @@ type TypeError = Infer.TypeError TypeDefKey
 data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
-data Location = DefListView SelectedDefKey | TypeDefView TypeDefKey | ExprDefView ExprDefViewLocation
+data Location = DefListView (Maybe SelectedDefKey) | TypeDefView TypeDefKey | ExprDefView ExprDefViewLocation
 type SelectedDefKey = DefKey
 data DefKey = TypeDefKey TypeDefKey | ExprDefKey Id deriving Eq
 type ExprDefViewLocation = (Id, E.Path)
@@ -105,7 +102,8 @@ getInitialState = do
     readExprDefsResult <- tryJust (guard . isDoesNotExistError) readExprDefs
     let exprDefs = either (const Map.empty) (Map.map $ fmap History.create) readExprDefsResult
     let clipboard = Clipboard Nothing Nothing
-    let locationHistory = History.create $ DefListView $ TypeDefKey $ BuiltIn minBound
+    let defKeys = (TypeDefKey <$> Map.keys typeDefs) ++ (ExprDefKey <$> Map.keys exprDefs)
+    let locationHistory = History.create $ DefListView $ listToMaybe defKeys
     return $ AppState typeDefs exprDefs locationHistory NoParens clipboard NotEditing Nothing
 
 readExprDefs :: IO (Map.Map Id (Maybe Name, Expr))
@@ -137,14 +135,14 @@ app = App
 
 draw :: AppState -> [AppWidget]
 draw appState = case view present $ view locationHistory appState of
-    DefListView selectedDefId -> drawDefListView appState selectedDefId
+    DefListView maybeSelectedDefKey -> drawDefListView appState maybeSelectedDefKey
     TypeDefView typeDefKey -> drawTypeDefView appState typeDefKey
     ExprDefView defViewLocation -> drawExprDefView appState defViewLocation
 
-drawDefListView :: AppState -> SelectedDefKey -> [AppWidget]
-drawDefListView appState selectedDefKey = [ renderTitle "Definitions" <=> renderedList ] where
+drawDefListView :: AppState -> Maybe SelectedDefKey -> [AppWidget]
+drawDefListView appState maybeSelectedDefKey = [ renderTitle "Definitions" <=> renderedList ] where
     renderedList = vBox $ renderItem <$> getDefKeys appState
-    renderItem key = grayIf (key /= selectedDefKey) (str $ getDefName appState key)
+    renderItem key = grayIf (Just key /= maybeSelectedDefKey) (str $ getDefName appState key)
     grayIf cond = if cond then modifyDefAttr $ flip Vty.withForeColor gray else id
 
 getDefName :: AppState -> DefKey -> Name
@@ -153,9 +151,7 @@ getDefName appState key = case key of
     ExprDefKey id -> getExprName appState id
 
 getTypeName :: AppState -> TypeDefKey -> Name
-getTypeName appState key = case key of
-    BuiltIn k -> show k
-    Custom id -> fromMaybe "Unnamed" $ fst $ view customTypeDefs appState Map.! id
+getTypeName appState key = fromMaybe "Unnamed" $ fst $ view typeDefs appState Map.! key
 
 getExprName :: AppState -> Id -> Name
 getExprName appState id = fromMaybe "unnamed" $ fst $ view exprDefs appState Map.! id
@@ -170,7 +166,7 @@ drawTypeDefView appState typeDefKey = [ title <=> vBox renderedDataConstructors 
     renderDataConstructor (T.DataConstructor name paramTypes) = str $ unwords $ name : printedParamTypes where
         printedParamTypes = printParamType <$> paramTypes
         printParamType t = inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) varNames t)
-    T.TypeDef varNames dataConstructors = getTypeDef (view customTypeDefs appState) typeDefKey
+    T.TypeDef varNames dataConstructors = getTypeDef (view typeDefs appState) typeDefKey
 
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
 drawExprDefView appState (defId, selectionPath) = ui where
@@ -345,31 +341,31 @@ getChildInPattern patt index = case patt of
 handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
 handleEvent appState brickEvent = case brickEvent of
     VtyEvent event -> case view present $ view locationHistory appState of
-        DefListView selectedDefKey -> handleEventOnDefListView appState event selectedDefKey
+        DefListView maybeSelectedDefKey -> handleEventOnDefListView appState event maybeSelectedDefKey
         TypeDefView typeDefKey -> handleEventOnTypeDefView appState event typeDefKey
         ExprDefView location -> handleEventOnExprDefView appState event location
     _ -> continue appState
 
-handleEventOnDefListView :: AppState -> Vty.Event -> DefKey -> EventM AppResourceName (Next AppState)
-handleEventOnDefListView appState event selectedDefKey = case event of
-    Vty.EvKey Vty.KEnter [] -> goToDef selectedDefKey appState
-    Vty.EvKey Vty.KUp [] -> select $ fromMaybe selectedDefKey maybePrevDefKey
-    Vty.EvKey Vty.KDown [] -> select $ fromMaybe selectedDefKey maybeNextDefKey
+handleEventOnDefListView :: AppState -> Vty.Event -> Maybe SelectedDefKey -> EventM AppResourceName (Next AppState)
+handleEventOnDefListView appState event maybeSelectedDefKey = case event of
+    Vty.EvKey Vty.KEnter [] -> maybe continue goToDef maybeSelectedDefKey appState
+    Vty.EvKey Vty.KUp [] -> maybe (continue appState) select maybePrevDefKey
+    Vty.EvKey Vty.KDown [] -> maybe (continue appState) select maybeNextDefKey
     Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
     Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
     Vty.EvKey (Vty.KChar 'a') [] -> addNewExprDef
     Vty.EvKey (Vty.KChar 'q') [] -> halt appState
     _ -> continue appState
     where
-        select defKey = continue $ appState & locationHistory . present . _DefListView .~ defKey
+        select defKey = continue $ appState & locationHistory . present . _DefListView ?~ defKey
         maybePrevDefKey = fmap (subtract 1) maybeSelectedIndex >>= flip getItemAtIndex defKeys
         maybeNextDefKey = fmap (+ 1) maybeSelectedIndex >>= flip getItemAtIndex defKeys
-        maybeSelectedIndex = elemIndex selectedDefKey defKeys
+        maybeSelectedIndex = maybeSelectedDefKey >>= flip elemIndex defKeys
         defKeys = getDefKeys appState
         addNewExprDef = liftIO createNewAppState >>= continue where
             createNewAppState = handleDefsChange $ appState
                 & exprDefs %~ Map.insert newDefId (Nothing, History.create E.Hole)
-                & locationHistory %~ push (ExprDefView (newDefId, [])) . (present .~ DefListView (ExprDefKey newDefId))
+                & locationHistory %~ push (ExprDefView (newDefId, [])) . (present . _DefListView ?~ ExprDefKey newDefId)
             newDefId = if null defs then 0 else fst (Map.findMax defs) + 1
             defs = view exprDefs appState
 
@@ -377,10 +373,7 @@ getDefKeys :: AppState -> [DefKey]
 getDefKeys appState = (TypeDefKey <$> getTypeDefKeys appState) ++ (ExprDefKey <$> getExprDefIds appState)
 
 getTypeDefKeys :: AppState -> [TypeDefKey]
-getTypeDefKeys appState = (BuiltIn <$> BT.typeDefKeys) ++ (Custom <$> getCustomTypeDefIds appState)
-
-getCustomTypeDefIds :: AppState -> [Id]
-getCustomTypeDefIds = Map.keys . view customTypeDefs
+getTypeDefKeys = Map.keys . view typeDefs
 
 getExprDefIds :: AppState -> [Id]
 getExprDefIds = Map.keys . view exprDefs
@@ -470,7 +463,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     where
-        currentCustomTypeDefs = view customTypeDefs appState
+        currentCustomTypeDefs = view typeDefs appState
         currentExprDefs = view exprDefs appState
         exprDefIds = Map.keys currentExprDefs
         getCurrentExprName = getExprName appState
@@ -652,7 +645,7 @@ handleDefsChange appState = do
 
 updateDerivedState :: AppState -> IO AppState
 updateDerivedState appState = do
-    let getCurrentTypeDef = getTypeDef $ view customTypeDefs appState
+    let getCurrentTypeDef = getTypeDef $ view typeDefs appState
     let currentExprDefs = view present . snd <$> view exprDefs appState
     let location = view present $ view locationHistory appState
     newDerivedState <- traverse (createDerivedState getCurrentTypeDef currentExprDefs) (preview _ExprDefView location)
@@ -673,9 +666,7 @@ createInferResult :: (TypeDefKey -> TypeDef) -> Map.Map Id Expr -> Id -> InferRe
 createInferResult getTypeDef defs defId = Infer.inferType (T.getConstructorType getTypeDef) defs $ defs Map.! defId
 
 getTypeDef :: Map.Map Id (n, History TypeDef) -> TypeDefKey -> TypeDef
-getTypeDef customTypeDefs key = case key of
-    BuiltIn k -> BT.getTypeDef k & T.dataConstructors %~ fmap (fmap BuiltIn)
-    Custom id -> view present . snd $ customTypeDefs Map.! id
+getTypeDef typeDefs key = view present . snd $ typeDefs Map.! key
 
 createEvalResult :: Map.Map Id Expr -> ExprDefViewLocation -> IO EvalResult
 createEvalResult defs (defId, selectionPath) = do
