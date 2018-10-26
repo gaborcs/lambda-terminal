@@ -353,6 +353,7 @@ handleEventOnDefListView appState event maybeSelectedDefKey = case event of
     Vty.EvKey Vty.KDown [] -> maybe (continue appState) select maybeNextDefKey
     Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
     Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
+    Vty.EvKey (Vty.KChar 'A') [] -> addNewTypeDef
     Vty.EvKey (Vty.KChar 'a') [] -> addNewExprDef
     Vty.EvKey (Vty.KChar 'q') [] -> halt appState
     _ -> continue appState
@@ -362,12 +363,17 @@ handleEventOnDefListView appState event maybeSelectedDefKey = case event of
         maybeNextDefKey = fmap (+ 1) maybeSelectedIndex >>= flip getItemAtIndex defKeys
         maybeSelectedIndex = maybeSelectedDefKey >>= flip elemIndex defKeys
         defKeys = getDefKeys appState
+        addNewTypeDef = liftIO createNewAppState >>= continue where
+            createNewAppState = handleDefsChange $ appState
+                & typeDefs %~ Map.insert newDefId (Nothing, History.create $ T.TypeDef [] [])
+                & locationHistory %~ push (TypeDefView newDefId) . (present . _DefListView ?~ ExprDefKey newDefId)
+            newDefId = createNewDefId $ view typeDefs appState
         addNewExprDef = liftIO createNewAppState >>= continue where
             createNewAppState = handleDefsChange $ appState
                 & exprDefs %~ Map.insert newDefId (Nothing, History.create E.Hole)
                 & locationHistory %~ push (ExprDefView (newDefId, [])) . (present . _DefListView ?~ ExprDefKey newDefId)
-            newDefId = if null defs then 0 else fst (Map.findMax defs) + 1
-            defs = view exprDefs appState
+            newDefId = createNewDefId $ view exprDefs appState
+        createNewDefId defs = if null defs then 0 else fst (Map.findMax defs) + 1
 
 getDefKeys :: AppState -> [DefKey]
 getDefKeys appState = (TypeDefKey <$> getTypeDefKeys appState) ++ (ExprDefKey <$> getExprDefIds appState)
