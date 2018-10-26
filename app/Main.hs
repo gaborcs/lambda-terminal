@@ -357,7 +357,7 @@ handleEventOnDefListView appState event selectedDefKey = case event of
     Vty.EvKey Vty.KDown [] -> select $ fromMaybe selectedDefKey maybeNextDefKey
     Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
     Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
-    Vty.EvKey (Vty.KChar 'n') [] -> addNewExprDef
+    Vty.EvKey (Vty.KChar 'a') [] -> addNewExprDef
     Vty.EvKey (Vty.KChar 'q') [] -> halt appState
     _ -> continue appState
     where
