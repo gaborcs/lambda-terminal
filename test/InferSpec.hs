@@ -6,10 +6,19 @@ import Primitive
 import Util
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
-import qualified BuiltInTypes as BT
 import qualified Expr as E
 import qualified Pattern as P
 import qualified Type as T
+
+data TestType = BoolT | MaybeT deriving (Eq, Show)
+data TestDataConstructorKey = FalseC | TrueC | NothingC | JustC deriving (Eq, Show)
+
+getConstructorType :: TestDataConstructorKey -> Maybe (T.Type TestType)
+getConstructorType key = Just $ case key of
+    FalseC -> T.Constructor BoolT []
+    TrueC -> T.Constructor BoolT []
+    NothingC -> T.Constructor MaybeT [T.Var 0]
+    JustC -> T.Fn (T.Var 0) (T.Constructor MaybeT [T.Var 0])
 
 spec :: Spec
 spec = do
@@ -32,16 +41,16 @@ spec = do
         E.Primitive Plus `hasType` T.Fn T.Int (T.Fn T.Int T.Int)
         E.Def "inc" `hasType` T.Fn T.Int T.Int
         E.Call (E.Def "inc") (E.Int 1) `hasType` T.Int
-        E.Constructor (T.DataConstructorKey BT.Maybe "Nothing") `hasType` T.Constructor BT.Maybe [T.Var 0]
-        E.Constructor (T.DataConstructorKey BT.Maybe "Just") `hasType` T.Fn (T.Var 0) (T.Constructor BT.Maybe [T.Var 0])
-        E.Call (E.Constructor (T.DataConstructorKey BT.Maybe "Just")) (E.Int 1) `hasType` T.Constructor BT.Maybe [T.Int]
-        E.Def "intToBool" `hasType` T.Fn T.Int (T.Constructor BT.Bool [])
+        E.Constructor NothingC `hasType` T.Constructor MaybeT [T.Var 0]
+        E.Constructor JustC `hasType` T.Fn (T.Var 0) (T.Constructor MaybeT [T.Var 0])
+        E.Call (E.Constructor JustC) (E.Int 1) `hasType` T.Constructor MaybeT [T.Int]
+        E.Def "intToBool" `hasType` T.Fn T.Int (T.Constructor BoolT [])
     it "indicates where type errors happen" $ do
         E.Call (E.Int 1) (E.Int 1) `failsAtPath` []
         E.fn "x" (E.Call (E.Int 1) (E.Int 1)) `failsAtPath` [1]
         E.Call (E.Def "inc") (E.Def "id") `failsAtPath` []
 
-defs :: Map.Map String (E.Expr String BT.DataConstructorKey)
+defs :: Map.Map String (E.Expr String TestDataConstructorKey)
 defs = Map.fromList
     [ ("constOne", E.fn "x" $ E.Int 1)
     , ("id", E.fn "x" $ E.Var "x")
@@ -49,11 +58,10 @@ defs = Map.fromList
     , ("inc", E.Call (E.Primitive Plus) $ E.Int 1)
     , ("diverge", E.Def "diverge")
     , ("divergeFn", E.fn "n" $ E.Call (E.Def "divergeFn") (E.Int 1))
-    , ("intToBool", E.Fn ((P.Int 0, E.Constructor (T.DataConstructorKey BT.Bool "False")) NonEmpty.:|
-        [(P.Wildcard, E.Constructor (T.DataConstructorKey BT.Bool "True"))]))
+    , ("intToBool", E.Fn ((P.Int 0, E.Constructor FalseC) NonEmpty.:| [(P.Wildcard, E.Constructor TrueC)]))
     ]
 
-hasType :: E.Expr String BT.DataConstructorKey -> T.Type BT.TypeDefKey -> Expectation
+hasType :: E.Expr String TestDataConstructorKey -> T.Type TestType -> Expectation
 hasType expr expectedType = case inferType getConstructorType defs expr of
     Typed (TypeTree actualType _) -> indexTVarsFromZero actualType `shouldBe` expectedType
     _ -> expectationFailure $ "type error for: " ++ show expr
@@ -61,10 +69,10 @@ hasType expr expectedType = case inferType getConstructorType defs expr of
 indexTVarsFromZero :: T.Type t -> T.Type t
 indexTVarsFromZero t = apply (Map.fromList $ zip (typeVars t) (T.Var <$> [0..])) t
 
-failsAtPath :: E.Expr String BT.DataConstructorKey -> E.Path -> Expectation
+failsAtPath :: E.Expr String TestDataConstructorKey -> E.Path -> Expectation
 failsAtPath expr path = inferType getConstructorType defs expr `hasErrorAtPath` path
 
-hasErrorAtPath :: InferResult BT.TypeDefKey -> E.Path -> Expectation
+hasErrorAtPath :: InferResult TestType -> E.Path -> Expectation
 hasErrorAtPath inferResult path = case inferResult of
     Typed _ -> expectationFailure "should have a type error"
     TypeError childResults -> case path of
@@ -72,6 +80,3 @@ hasErrorAtPath inferResult path = case inferResult of
         index:restOfPath -> case getItemAtIndex index childResults of
             Just childResult -> childResult `hasErrorAtPath` restOfPath
             Nothing -> expectationFailure "path doesn't exist"
-
-getConstructorType :: BT.DataConstructorKey -> Maybe (T.Type BT.TypeDefKey)
-getConstructorType = T.getConstructorType BT.getTypeDef
