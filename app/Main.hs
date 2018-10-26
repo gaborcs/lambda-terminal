@@ -445,7 +445,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         Vty.EvKey Vty.KEnter [] -> goToDefinition
         Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
         Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
-        Vty.EvKey (Vty.KChar 'n') [] -> initiateRename
+        Vty.EvKey (Vty.KChar 'N') [] -> initiateRenameDefinition
         Vty.EvKey Vty.KUp [] -> navToParent
         Vty.EvKey Vty.KDown [] -> navToChild
         Vty.EvKey Vty.KLeft [] -> navBackward
@@ -478,7 +478,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         defExpr = view present defHistory
         currentClipboard = view clipboard appState
         currentEditState = view editState appState
-        initiateRename = setEditState $ Naming initialRenameEditor
+        initiateRenameDefinition = setEditState $ Naming initialRenameEditor
         initialRenameEditor = applyEdit gotoEOL $ editor EditorName (Just 1) $ fromMaybe "" maybeDefName
         commitName newName = continue $ case newName of
             firstChar : restOfChars | isLower firstChar && all isAlphaNum restOfChars -> appState
