@@ -525,17 +525,18 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern defExpr
         setEditState newEditState = continue $ appState & editState .~ newEditState
-        callSelected = modifyExprContainingSelection $ \expr -> E.Call expr E.Hole
-        applyFnToSelected = modifyExprContainingSelection $ E.Call E.Hole
-        wrapSelectedInFn = modifyExprContainingSelection $ \expr -> E.Fn (pure (P.Wildcard, expr))
-        modifyExprContainingSelection modify = liftIO createNewAppState >>= continue where
+        callSelected = modifyExprContainingSelection (`E.Call` E.Hole) [1]
+        applyFnToSelected = modifyExprContainingSelection (E.Hole `E.Call`) [0]
+        wrapSelectedInFn = modifyExprContainingSelection (\expr -> E.Fn $ pure (P.Wildcard, expr)) [0]
+        addAlternativeToSelected = maybe (continue appState) addAlternative (getContainingFunction selectionPath defExpr)
+        addAlternative (fnPath, alts) = modifyExpr fnPath (const $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)) [2 * length alts]
+        modifyExprContainingSelection = modifyExpr $ dropPatternPartOfPath defExpr selectionPath
+        modifyExpr path modify selectionPathInModifiedExpr = liftIO createNewAppState >>= continue where
             createNewAppState = handleDefsChange $ appState
                 & exprDefs . ix defId . _2 %~ push newExpr
-                & locationHistory . present . _ExprDefView . _2 .~ pathToExprContainingSelection
-                & editState .~ NotEditing
-            newExpr = modifyAtPathInExpr pathToExprContainingSelection modify id defExpr
-            pathToExprContainingSelection = dropPatternPartOfPath defExpr selectionPath
-        addAlternativeToSelected = maybe (continue appState) modifyDef (addAlternativeAtPath selectionPath defExpr)
+                & locationHistory . present . _ExprDefView . _2 .~ newSelectionPath
+            newExpr = modifyAtPathInExpr path modify id defExpr
+            newSelectionPath = path ++ selectionPathInModifiedExpr
         deleteSelected = modifyDef $ replaceSelected E.Hole P.Wildcard
         modifyDef newExpr = liftIO createNewAppState >>= continue where
             createNewAppState = handleDefsChange $ appState
@@ -632,16 +633,15 @@ dropPatternPartOfPath expr path = case path of
         E.Call _ arg | edge == 1 -> 1 : dropPatternPartOfPath arg restOfPath
         _ -> error "invalid path"
 
-addAlternativeAtPath :: E.Path -> E.Expr d c -> Maybe (E.Expr d c)
-addAlternativeAtPath selectionPath expr = case (expr, selectionPath) of
-    (E.Fn alts, edge:restOfPath) | odd edge -> case addAlternativeAtPath restOfPath (snd $ alts NonEmpty.!! altIndex) of
-        Just expr -> Just $ E.Fn $ modifyItemAtIndexInNonEmpty altIndex modifyAlt alts where
-            modifyAlt (patt, _) = (patt, expr)
-        _ -> Just $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)
-        where altIndex = div edge 2
-    (E.Fn alts, _) -> Just $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)
-    (E.Call callee arg, 0:restOfPath) -> E.Call <$> addAlternativeAtPath restOfPath callee <*> pure arg
-    (E.Call callee arg, 1:restOfPath) -> E.Call callee <$> addAlternativeAtPath restOfPath arg
+getContainingFunction :: E.Path -> E.Expr d c -> Maybe (E.Path, NonEmpty.NonEmpty (E.Alternative d c))
+getContainingFunction selectionPath expr = case (expr, selectionPath) of
+    (E.Fn alts, edge:restOfSelectionPath) | odd edge -> case getContainingFunction restOfSelectionPath childAtEdge of
+        Just (path, alts) -> Just (edge : path, alts)
+        _ -> Just ([], alts)
+        where childAtEdge = snd $ alts NonEmpty.!! div edge 2
+    (E.Fn alts, _) -> Just ([], alts)
+    (E.Call callee _, 0:restOfSelectionPath) -> (_1 %~ (0:)) <$> getContainingFunction restOfSelectionPath callee
+    (E.Call _ arg, 1:restOfSelectionPath) -> (_1 %~ (1:)) <$> getContainingFunction restOfSelectionPath arg
     _ -> Nothing
 
 handleDefsChange :: AppState -> IO AppState
