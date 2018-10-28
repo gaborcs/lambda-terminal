@@ -19,6 +19,7 @@ import Brick hiding (Location)
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
 import Safe
+import Diff
 import Eval
 import History
 import PrettyPrintType
@@ -552,8 +553,14 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
             Pattern p -> clipboardPattern ?~ p
         paste = modifyDef $ modifySelected (maybe id const exprClipboard) (maybe id const patternClipboard)
         Clipboard exprClipboard patternClipboard = currentClipboard
-        undo = liftIO (handleDefsChange $ appState & exprDefs . ix defId . _2 %~ goBack) >>= continue
-        redo = liftIO (handleDefsChange $ appState & exprDefs . ix defId . _2 %~ goForward) >>= continue
+        undo = modifyDefHistory goBack
+        redo = modifyDefHistory goForward
+        modifyDefHistory modify = liftIO createAppState >>= continue where
+            createAppState = handleDefsChange $ appState
+                & exprDefs . ix defId . _2 .~ newDefHistory
+                & locationHistory . present . _ExprDefView . _2 %~ modifySelectionPath
+            newDefHistory = modify defHistory
+            modifySelectionPath = maybe id const $ getDiffPathBetweenExprs defExpr $ view present newDefHistory
 
 goToDef :: DefKey -> AppState -> EventM AppResourceName (Next AppState)
 goToDef key = case key of
