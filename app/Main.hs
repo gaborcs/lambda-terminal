@@ -543,15 +543,18 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
             Pattern P.Wildcard -> removeSelectedFromParent
             _ -> modifyDef $ replaceSelected E.Hole P.Wildcard
         removeSelectedFromParent = case viewR selectionPath of
-            Just (parentPath, childIndex) -> modifyExpr parentPath removeSelected [] where
-                removeSelected parent = case parent of
-                    E.Fn alts -> case NonEmpty.nonEmpty $ removeItemAtIndex altIndex $ NonEmpty.toList alts of
-                        Just altsWithoutSelected -> E.Fn altsWithoutSelected
-                        Nothing -> if selected == Pattern P.Wildcard then snd $ NonEmpty.head alts else E.Hole
-                    E.Call _ arg | childIndex == 0 -> arg
-                    E.Call callee _ | childIndex == 1 -> callee
-                    _ -> error "invalid path"
-                altIndex = div childIndex 2
+            Just (parentPath, childIndex) -> case getItemAtPathInExpr parentPath defExpr of
+                Just (Expr parent) -> modifyExpr parentPath (const parentReplacement) selectionPathInParentReplacement where
+                    (parentReplacement, selectionPathInParentReplacement) = case parent of
+                        E.Fn alts -> case NonEmpty.nonEmpty $ removeItemAtIndex altIndex $ NonEmpty.toList alts of
+                            Just altsWithoutSelected -> (E.Fn altsWithoutSelected, [newChildIndex]) where
+                                newChildIndex = if altIndex == length altsWithoutSelected then childIndex - 2 else childIndex
+                            Nothing -> (if selected == Pattern P.Wildcard then snd $ NonEmpty.head alts else E.Hole, [])
+                        E.Call _ arg | childIndex == 0 -> (arg, [])
+                        E.Call callee _ | childIndex == 1 -> (callee, [])
+                        _ -> error "invalid path"
+                    altIndex = div childIndex 2
+                _ -> continue appState
             Nothing -> continue appState
         modifyDef newExpr = liftIO createNewAppState >>= continue where
             createNewAppState = handleDefsChange $ appState
