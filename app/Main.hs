@@ -9,6 +9,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Data.Char
 import Data.List
+import Data.List.HT (viewR)
 import Data.Maybe
 import Data.Text.Zipper
 import System.Environment
@@ -81,7 +82,7 @@ data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
 type AutocompleteList = ListWidget.List AppResourceName Selectable
 type EditorExtent = Extent AppResourceName
 data EvalResult = Timeout | Error | Value Value
-data Selectable = Expr Expr | Pattern Pattern
+data Selectable = Expr Expr | Pattern Pattern deriving Eq
 newtype RenderChild = RenderChild (E.ChildIndex -> Renderer -> RenderResult)
 type Renderer = WrappingStyle -> RenderChild -> RenderResult
 type RenderResult = (RenderResultType, AppWidget)
@@ -537,7 +538,21 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
                 & locationHistory . present . _ExprDefView . _2 .~ newSelectionPath
             newExpr = modifyAtPathInExpr path modify id defExpr
             newSelectionPath = path ++ selectionPathInModifiedExpr
-        deleteSelected = modifyDef $ replaceSelected E.Hole P.Wildcard
+        deleteSelected = case selected of
+            Expr E.Hole -> removeSelectedFromParent
+            Pattern P.Wildcard -> removeSelectedFromParent
+            _ -> modifyDef $ replaceSelected E.Hole P.Wildcard
+        removeSelectedFromParent = case viewR selectionPath of
+            Just (parentPath, childIndex) -> modifyExpr parentPath removeSelected [] where
+                removeSelected parent = case parent of
+                    E.Fn alts -> case NonEmpty.nonEmpty $ removeItemAtIndex altIndex $ NonEmpty.toList alts of
+                        Just altsWithoutSelected -> E.Fn altsWithoutSelected
+                        Nothing -> if selected == Pattern P.Wildcard then snd $ NonEmpty.head alts else E.Hole
+                    E.Call _ arg | childIndex == 0 -> arg
+                    E.Call callee _ | childIndex == 1 -> callee
+                    _ -> error "invalid path"
+                altIndex = div childIndex 2
+            Nothing -> continue appState
         modifyDef newExpr = liftIO createNewAppState >>= continue where
             createNewAppState = handleDefsChange $ appState
                 & exprDefs . ix defId . _2 %~ push newExpr
