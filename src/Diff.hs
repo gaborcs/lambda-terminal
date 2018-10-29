@@ -18,7 +18,8 @@ getDiffPathBetweenExprs e1 e2 = case e1 of
         E.Var v2 | v1 == v2 -> Nothing
         _ -> Just []
     E.Fn alts1 -> case e2 of
-        E.Fn alts2 -> useChildDiffPaths $ join $ NonEmpty.toList $ NonEmpty.zipWith f alts1 alts2 where
+        E.Fn alts2 | length alts1 == length alts2 -> useChildDiffPaths childDiffPaths where
+            childDiffPaths = join $ NonEmpty.toList $ NonEmpty.zipWith f alts1 alts2
             f (p1, b1) (p2, b2) = [getDiffPathBetweenPatterns p1 p2, getDiffPathBetweenExprs b1 b2]
         _ -> Just []
     E.Call callee1 arg1 -> case e2 of
