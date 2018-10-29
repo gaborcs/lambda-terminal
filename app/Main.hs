@@ -397,14 +397,13 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
     Naming editor -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit
         Vty.EvKey Vty.KEnter [] -> commitName $ head $ getEditContents editor
-        Vty.EvKey (Vty.KChar ' ') [] -> commitName $ head $ getEditContents editor
         _ -> do
             newEditor <- handleEditorEvent event editor
             continue $ appState & editState .~ Naming newEditor
     SelectionEditing editor maybeAutocompleteState -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit
-        Vty.EvKey Vty.KEnter [] -> maybe (continue appState) commitAutocompleteSelection maybeAutocompleteState
-        Vty.EvKey (Vty.KChar ' ') [] -> commitEditorContent editorContent
+        Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) commitAutocompleteSelection maybeAutocompleteState
+        Vty.EvKey Vty.KEnter [] -> commitEditorContent editorContent
         _ -> do
             newEditor <- case event of
                 -- ignore up/down as they are used to control the autocomplete
