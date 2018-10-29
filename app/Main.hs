@@ -630,7 +630,7 @@ modifyAtPathInExpr :: E.Path -> (E.Expr d c -> E.Expr d c) -> (P.Pattern c -> P.
 modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
     [] -> modifyExpr expr
     edge:restOfPath -> case expr of
-        E.Fn alts -> E.Fn $ modifyItemAtIndexInNonEmpty (div edge 2) modifyAlt alts where
+        E.Fn alts -> E.Fn $ alts & ix (div edge 2) %~ modifyAlt where
             modifyAlt (patt, expr) =
                 if even edge
                 then (modifyAtPathInPattern restOfPath modifyPattern patt, expr)
@@ -645,7 +645,7 @@ modifyAtPathInPattern :: E.Path -> (P.Pattern t -> P.Pattern t) -> P.Pattern t -
 modifyAtPathInPattern path modify patt = case path of
     [] -> modify patt
     edge:restOfPath -> case patt of
-        P.Constructor name children -> P.Constructor name $ modifyItemAtIndex edge (modifyAtPathInPattern restOfPath modify) children
+        P.Constructor name children -> P.Constructor name $ children & ix edge %~ modifyAtPathInPattern restOfPath modify
         _ -> error "invalid path"
 
 dropPatternPartOfPath :: E.Expr d c -> E.Path -> E.Path
