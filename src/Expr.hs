@@ -22,3 +22,11 @@ data Expr defKey constructorKey
 -- shortcut for creating functions with a single alternative
 fn :: VarName -> Expr d c -> Expr d c
 fn var body = Fn $ pure (P.Var var, body)
+
+renameVar :: VarName -> VarName -> Expr d c -> Expr d c
+renameVar oldName newName expr = case expr of
+    Var name | name == oldName -> Var newName
+    Fn alts -> Fn $ renameAlt <$> alts where
+        renameAlt (p, e) = (P.renameVar oldName newName p, renameVar oldName newName e)
+    Call callee arg -> Call (renameVar oldName newName callee) (renameVar oldName newName arg)
+    _ -> expr
