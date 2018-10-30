@@ -75,7 +75,7 @@ data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Boun
 data Location = DefListView (Maybe SelectedDefKey) | TypeDefView TypeDefKey | ExprDefView ExprDefViewLocation
 type SelectedDefKey = DefKey
 data DefKey = TypeDefKey TypeDefKey | ExprDefKey Id deriving Eq
-type ExprDefViewLocation = (Id, E.Path)
+type ExprDefViewLocation = (Id, Path)
 data EditState = NotEditing | Naming EditorState | SelectionEditing EditorState (Maybe AutocompleteState)
 type EditorState = Editor String AppResourceName
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
@@ -83,11 +83,11 @@ type AutocompleteList = ListWidget.List AppResourceName Selectable
 type EditorExtent = Extent AppResourceName
 data EvalResult = Timeout | Error | Value Value
 data Selectable = Expr Expr | Pattern Pattern deriving Eq
-newtype RenderChild = RenderChild (E.ChildIndex -> Renderer -> RenderResult)
+newtype RenderChild = RenderChild (ChildIndex -> Renderer -> RenderResult)
 type Renderer = WrappingStyle -> RenderChild -> RenderResult
 type RenderResult = (RenderResultType, AppWidget)
 data RenderResultType = OneWord | OneLine | MultiLine deriving Eq
-data Selection = ContainsSelection E.Path | WithinSelection | NoSelection deriving Eq
+data Selection = ContainsSelection Path | WithinSelection | NoSelection deriving Eq
 
 makeLenses ''AppState
 makeLenses ''Clipboard
@@ -289,43 +289,43 @@ indent w = str "  " <+> w
 highlight :: Widget n -> Widget n
 highlight = modifyDefAttr $ const Vty.defAttr -- the gray foreground color is changed back to the default
 
-getChildSelection :: Selection -> E.ChildIndex -> Selection
+getChildSelection :: Selection -> ChildIndex -> Selection
 getChildSelection selection index = case selection of
     ContainsSelection (i:childPath) -> if i == index then ContainsSelection childPath else NoSelection
     ContainsSelection [] -> WithinSelection
     WithinSelection -> WithinSelection
     NoSelection -> NoSelection
 
-getChildTypeError :: Maybe TypeError -> E.ChildIndex -> Maybe TypeError
+getChildTypeError :: Maybe TypeError -> ChildIndex -> Maybe TypeError
 getChildTypeError maybeTypeError index = childResult >>= preview Infer._TypeError
     where childResult = (!! index) <$> maybeTypeError
 
-getTypeAtPathInInferResult :: E.Path -> InferResult -> Maybe Type
+getTypeAtPathInInferResult :: Path -> InferResult -> Maybe Type
 getTypeAtPathInInferResult path inferResult = case inferResult of
     Infer.Typed typeTree -> getTypeAtPathInTypeTree path typeTree
     Infer.TypeError childResults -> case path of
         [] -> Nothing
         index:restOfPath -> getTypeAtPathInInferResult restOfPath $ childResults !! index
 
-getTypeAtPathInTypeTree :: E.Path -> TypeTree -> Maybe Type
+getTypeAtPathInTypeTree :: Path -> TypeTree -> Maybe Type
 getTypeAtPathInTypeTree path (Infer.TypeTree t children) = case path of
     [] -> Just t
     index:restOfPath -> getTypeAtPathInTypeTree restOfPath $ children !! index
 
-getItemAtPathInExpr :: E.Path -> Expr -> Maybe Selectable
+getItemAtPathInExpr :: Path -> Expr -> Maybe Selectable
 getItemAtPathInExpr path expr = getItemAtPathInSelectable path (Expr expr)
 
-getItemAtPathInSelectable :: E.Path -> Selectable -> Maybe Selectable
+getItemAtPathInSelectable :: Path -> Selectable -> Maybe Selectable
 getItemAtPathInSelectable path selectable = case path of
     [] -> Just selectable
     edge:restOfPath -> getChildInSelectable selectable edge >>= getItemAtPathInSelectable restOfPath
 
-getChildInSelectable :: Selectable -> E.ChildIndex -> Maybe Selectable
+getChildInSelectable :: Selectable -> ChildIndex -> Maybe Selectable
 getChildInSelectable selectable = case selectable of
     Expr e -> getChildInExpr e
     Pattern p -> getChildInPattern p
 
-getChildInExpr :: Expr -> E.ChildIndex -> Maybe Selectable
+getChildInExpr :: Expr -> ChildIndex -> Maybe Selectable
 getChildInExpr expr index = case (expr, index) of
     (E.Fn alternatives, _) -> do
         let altIndex = div index 2
@@ -335,7 +335,7 @@ getChildInExpr expr index = case (expr, index) of
     (E.Call _ arg, 1) -> Just $ Expr arg
     _ -> Nothing
 
-getChildInPattern :: Pattern -> E.ChildIndex -> Maybe Selectable
+getChildInPattern :: Pattern -> ChildIndex -> Maybe Selectable
 getChildInPattern patt index = case patt of
     P.Constructor _ patterns -> Pattern <$> getItemAtIndex index patterns
     _ -> Nothing
@@ -611,7 +611,7 @@ printAutocompleteItem getExprName item = case item of
     Pattern (P.Int n) -> show n
     _ -> ""
 
-getVarsAtPath :: E.Path -> E.Expr d c -> [E.VarName]
+getVarsAtPath :: Path -> E.Expr d c -> [E.VarName]
 getVarsAtPath path expr = case path of
     [] -> []
     edge:restOfPath -> case expr of
@@ -626,7 +626,7 @@ getVars (P.Var name) = [name]
 getVars (P.Constructor _ children) = children >>= getVars
 getVars _ = []
 
-modifyAtPathInExpr :: E.Path -> (E.Expr d c -> E.Expr d c) -> (P.Pattern c -> P.Pattern c) -> E.Expr d c -> E.Expr d c
+modifyAtPathInExpr :: Path -> (E.Expr d c -> E.Expr d c) -> (P.Pattern c -> P.Pattern c) -> E.Expr d c -> E.Expr d c
 modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
     [] -> modifyExpr expr
     edge:restOfPath -> case expr of
@@ -641,14 +641,14 @@ modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
             E.Call callee (modifyAtPathInExpr restOfPath modifyExpr modifyPattern arg)
         _ -> error "invalid path"
 
-modifyAtPathInPattern :: E.Path -> (P.Pattern t -> P.Pattern t) -> P.Pattern t -> P.Pattern t
+modifyAtPathInPattern :: Path -> (P.Pattern t -> P.Pattern t) -> P.Pattern t -> P.Pattern t
 modifyAtPathInPattern path modify patt = case path of
     [] -> modify patt
     edge:restOfPath -> case patt of
         P.Constructor name children -> P.Constructor name $ children & ix edge %~ modifyAtPathInPattern restOfPath modify
         _ -> error "invalid path"
 
-dropPatternPartOfPath :: E.Expr d c -> E.Path -> E.Path
+dropPatternPartOfPath :: E.Expr d c -> Path -> Path
 dropPatternPartOfPath expr path = case path of
     [] -> []
     edge:restOfPath -> case expr of
@@ -657,7 +657,7 @@ dropPatternPartOfPath expr path = case path of
         E.Call _ arg | edge == 1 -> 1 : dropPatternPartOfPath arg restOfPath
         _ -> error "invalid path"
 
-getContainingFunction :: E.Path -> E.Expr d c -> Maybe (E.Path, NonEmpty.NonEmpty (E.Alternative d c))
+getContainingFunction :: Path -> E.Expr d c -> Maybe (Path, NonEmpty.NonEmpty (E.Alternative d c))
 getContainingFunction selectionPath expr = case (expr, selectionPath) of
     (E.Fn alts, edge:restOfSelectionPath) | odd edge -> case getContainingFunction restOfSelectionPath childAtEdge of
         Just (path, alts) -> Just (edge : path, alts)

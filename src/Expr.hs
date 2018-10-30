@@ -22,6 +22,3 @@ data Expr defKey constructorKey
 -- shortcut for creating functions with a single alternative
 fn :: VarName -> Expr d c -> Expr d c
 fn var body = Fn $ pure (P.Var var, body)
-
-type Path = [ChildIndex]
-type ChildIndex = Int

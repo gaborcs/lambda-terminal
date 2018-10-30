@@ -6,7 +6,10 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Expr as E
 import qualified Pattern as P
 
-getDiffPathBetweenExprs :: (Eq c, Eq d) => E.Expr d c -> E.Expr d c -> Maybe E.Path
+type Path = [ChildIndex]
+type ChildIndex = Int
+
+getDiffPathBetweenExprs :: (Eq c, Eq d) => E.Expr d c -> E.Expr d c -> Maybe Path
 getDiffPathBetweenExprs e1 e2 = case e1 of
     E.Hole -> case e2 of
         E.Hole -> Nothing
@@ -35,7 +38,7 @@ getDiffPathBetweenExprs e1 e2 = case e1 of
         E.Primitive p2 | p1 == p2 -> Nothing
         _ -> Just []
 
-getDiffPathBetweenPatterns :: Eq t => P.Pattern t -> P.Pattern t -> Maybe E.Path
+getDiffPathBetweenPatterns :: Eq t => P.Pattern t -> P.Pattern t -> Maybe Path
 getDiffPathBetweenPatterns p1 p2 = case p1 of
     P.Wildcard -> case p2 of
         P.Wildcard -> Nothing
@@ -50,7 +53,7 @@ getDiffPathBetweenPatterns p1 p2 = case p1 of
         P.Int n2 | n1 == n2 -> Nothing
         _ -> Just []
 
-useChildDiffPaths :: [Maybe E.Path] -> Maybe E.Path
+useChildDiffPaths :: [Maybe Path] -> Maybe Path
 useChildDiffPaths childDiffPaths = case filter (isJust . snd) $ zip [0..] childDiffPaths of
     [] -> Nothing
     [(childIndex, childDiffPath)] -> (childIndex :) <$> childDiffPath

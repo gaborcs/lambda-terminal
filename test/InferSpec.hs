@@ -10,6 +10,8 @@ import qualified Expr as E
 import qualified Pattern as P
 import qualified Type as T
 
+type Path = [ChildIndex]
+type ChildIndex = Int
 data TestType = BoolT | MaybeT deriving (Eq, Show)
 data TestDataConstructorKey = FalseC | TrueC | NothingC | JustC deriving (Eq, Show)
 
@@ -69,10 +71,10 @@ hasType expr expectedType = case inferType getConstructorType defs expr of
 indexTVarsFromZero :: T.Type t -> T.Type t
 indexTVarsFromZero t = apply (Map.fromList $ zip (typeVars t) (T.Var <$> [0..])) t
 
-failsAtPath :: E.Expr String TestDataConstructorKey -> E.Path -> Expectation
+failsAtPath :: E.Expr String TestDataConstructorKey -> Path -> Expectation
 failsAtPath expr path = inferType getConstructorType defs expr `hasErrorAtPath` path
 
-hasErrorAtPath :: InferResult TestType -> E.Path -> Expectation
+hasErrorAtPath :: InferResult TestType -> Path -> Expectation
 hasErrorAtPath inferResult path = case inferResult of
     Typed _ -> expectationFailure "should have a type error"
     TypeError childResults -> case path of
