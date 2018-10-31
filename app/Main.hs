@@ -599,10 +599,8 @@ isValidExprName name = case name of
     firstChar : restOfChars | isLower firstChar && all isAlphaNum restOfChars -> True
     _ -> False
 
-isValidVarName :: String -> Bool
-isValidVarName name = case name of
-    firstChar : restOfChars | isAlpha firstChar && all isAlphaNum restOfChars -> True
-    _ -> False
+isValidVarName :: Name -> Bool
+isValidVarName = isValidExprName
 
 goToDef :: DefKey -> AppState -> EventM AppResourceName (Next AppState)
 goToDef key = case key of
