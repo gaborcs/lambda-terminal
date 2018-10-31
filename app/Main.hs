@@ -494,12 +494,8 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         initiateRenameDefinition = setEditState $ Naming initialRenameEditor
         initialRenameEditor = applyEdit gotoEOL $ editor EditorName (Just 1) $ fromMaybe "" maybeDefName
         commitName newName = continue $ case newName of
-            firstChar : restOfChars | isLower firstChar && all isAlphaNum restOfChars -> appState
-                & exprDefs . ix defId . _1 ?~ newName
-                & editState .~ NotEditing
-            "" -> appState
-                & exprDefs . ix defId . _1 .~ Nothing
-                & editState .~ NotEditing
+            "" -> appState & exprDefs . ix defId . _1 .~ Nothing & editState .~ NotEditing
+            _ | isValidExprName newName -> appState & exprDefs . ix defId . _1 ?~ newName & editState .~ NotEditing
             _ -> appState
         navToParent = nav parentPath
         navToChild = nav pathToFirstChildOfSelected
@@ -597,6 +593,11 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
                 & locationHistory . present . _ExprDefView . _2 %~ modifySelectionPath
             newDefHistory = modify defHistory
             modifySelectionPath = maybe id const $ getDiffPathBetweenExprs defExpr $ view present newDefHistory
+
+isValidExprName :: Name -> Bool
+isValidExprName name = case name of
+    firstChar : restOfChars | isLower firstChar && all isAlphaNum restOfChars -> True
+    _ -> False
 
 isValidVarName :: String -> Bool
 isValidVarName name = case name of
