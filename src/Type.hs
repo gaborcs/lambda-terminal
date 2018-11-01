@@ -15,17 +15,17 @@ data Type typeDefKey
     | Fn (Type typeDefKey) (Type typeDefKey)
     | Constructor typeDefKey [Type typeDefKey]
     | Int
-    deriving (Eq, Show, Functor)
+    deriving (Eq, Read, Show, Functor)
 
 data TypeDef typeDefKey = TypeDef
     { _varNames :: [String]
     , _dataConstructors :: [DataConstructor typeDefKey]
-    }
+    } deriving (Read, Show)
 
 data DataConstructor typeDefKey = DataConstructor
     { _dataConstructorName :: String
     , _dataConstructorParamTypes :: [Type typeDefKey]
-    } deriving Functor
+    } deriving (Read, Show, Functor)
 
 data DataConstructorKey typeDefKey = DataConstructorKey
     { _typeDefKey :: typeDefKey
