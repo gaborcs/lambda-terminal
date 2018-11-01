@@ -14,8 +14,11 @@ makeLenses ''History
 create :: a -> History a
 create present = History [] present []
 
+step :: (a -> a) -> History a -> History a
+step modifyPresent (History past present _) = History (present:past) (modifyPresent present) []
+
 push :: a -> History a -> History a
-push newPresent (History past present _) = History (present:past) newPresent []
+push newPresent = step $ const newPresent
 
 goBack :: History a -> History a
 goBack history@(History past present future) = case past of

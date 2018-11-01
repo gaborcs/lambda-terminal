@@ -55,6 +55,7 @@ data Clipboard = Clipboard
 data EditState
     = NotEditing
     | Naming EditorState
+    | AddingDataConstructor EditorState
     | SelectionRenaming EditorState
     | SelectionEditing EditorState (Maybe AutocompleteState)
 data DerivedState = DerivedState
@@ -183,10 +184,13 @@ gray :: Vty.Color
 gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark backgrounds
 
 drawTypeDefView :: AppState -> TypeDefKey -> [AppWidget]
-drawTypeDefView appState typeDefKey = [ renderedTitle <=> vBox renderedDataConstructors ] where
+drawTypeDefView appState typeDefKey = [ renderedTitle <=> body ] where
     renderedTitle = case view editState appState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ getTypeName appState typeDefKey
+    body = vBox $ case view editState appState of
+        AddingDataConstructor editor -> renderedDataConstructors ++ [renderEditor (str . head) True editor]
+        _ -> renderedDataConstructors
     renderedDataConstructors = renderDataConstructor <$> dataConstructors
     renderDataConstructor (T.DataConstructor name paramTypes) = str $ unwords $ name : printedParamTypes where
         printedParamTypes = printParamType <$> paramTypes
@@ -411,36 +415,39 @@ getExprDefIds :: AppState -> [Id]
 getExprDefIds = Map.keys . view exprDefs
 
 handleEventOnTypeDefView :: AppState -> Vty.Event -> TypeDefKey -> EventM AppResourceName (Next AppState)
-handleEventOnTypeDefView appState event _ = case view editState appState of
-    Naming editor -> case event of
-        Vty.EvKey Vty.KEsc [] -> cancelEdit appState
-        Vty.EvKey Vty.KEnter [] -> commitDefName appState (head $ getEditContents editor) isValidTypeName
-        _ -> handleNamingEditorEvent appState event editor
+handleEventOnTypeDefView appState event typeDefKey = case view editState appState of
     NotEditing -> case event of
         Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
         Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
         Vty.EvKey (Vty.KChar 'N') [] -> initiateRenameDefinition appState
+        Vty.EvKey Vty.KEnter [] -> initiateAddDataConstructor appState
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
+    Naming editor -> case event of
+        Vty.EvKey Vty.KEsc [] -> cancelEdit appState
+        Vty.EvKey Vty.KEnter [] -> commitDefName appState (head $ getEditContents editor) isValidTypeName
+        _ -> handleEditorEvent event editor >>= setEditState appState . Naming
+    AddingDataConstructor editor -> case event of
+        Vty.EvKey Vty.KEsc [] -> cancelEdit appState
+        Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey (head $ getEditContents editor)
+        _ -> handleEditorEvent event editor >>= setEditState appState . AddingDataConstructor
     _ -> continue appState
 
-handleNamingEditorEvent :: AppState -> Vty.Event -> Editor String AppResourceName -> EventM AppResourceName (Next AppState)
-handleNamingEditorEvent appState event editor = do
-    newEditor <- handleEditorEvent event editor
-    continue $ appState & editState .~ Naming newEditor
+setEditState :: AppState -> EditState -> EventM AppResourceName (Next AppState)
+setEditState appState newEditState = continue $ appState & editState .~ newEditState
 
 handleEventOnExprDefView :: AppState -> Vty.Event -> ExprDefViewLocation -> EventM AppResourceName (Next AppState)
 handleEventOnExprDefView appState event (defId, selectionPath) = case currentEditState of
     Naming editor -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitDefName appState (head $ getEditContents editor) isValidExprName
-        _ -> handleNamingEditorEvent appState event editor
+        _ -> handleEditorEvent event editor >>= setEditState appState . Naming
     SelectionRenaming editor -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitSelectionRename $ head $ getEditContents editor
         _ -> do
             newEditor <- handleEditorEvent event editor
-            setEditState $ SelectionRenaming newEditor
+            setEditState appState $ SelectionRenaming newEditor
     SelectionEditing editor maybeAutocompleteState -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) commitAutocompleteSelection maybeAutocompleteState
@@ -479,7 +486,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
                                 return $ P.Constructor constructorKey wildcards
                     typeDefKeys = getTypeDefKeys appState
             maybeEditorExtent <- lookupExtent EditorName
-            setEditState $ SelectionEditing newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
+            setEditState appState $ SelectionEditing newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
         where editorContent = head $ getEditContents editor
     NotEditing -> case event of
         Vty.EvKey Vty.KEnter [] -> goToDefinition
@@ -510,6 +517,7 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
         Vty.EvKey (Vty.KChar 'r') [] -> redo
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
+    _ -> error "invalid state"
     where
         currentCustomTypeDefs = view typeDefs appState
         currentExprDefs = view exprDefs appState
@@ -540,10 +548,10 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
             Expr (E.Def defId) | Map.member defId currentExprDefs -> goToExprDef defId appState
             _ -> continue appState
         initiateRenameSelection = case selected of
-            Pattern (P.Var name) -> setEditState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
-            Expr (E.Var name) -> setEditState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
+            Pattern (P.Var name) -> setEditState appState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
+            Expr (E.Var name) -> setEditState appState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
             _ -> continue appState
-        initiateSelectionEdit = setEditState $ SelectionEditing initialSelectionEditor Nothing
+        initiateSelectionEdit = setEditState appState $ SelectionEditing initialSelectionEditor Nothing
         initialSelectionEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialSelectionEditorContent
         initialSelectionEditorContent = printAutocompleteItem getCurrentExprName selected
         commitSelectionRename editorContent = case selected of
@@ -561,7 +569,6 @@ handleEventOnExprDefView appState event (defId, selectionPath) = case currentEdi
             _ -> continue appState
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern defExpr
-        setEditState newEditState = continue $ appState & editState .~ newEditState
         callSelected = modifyExprContainingSelection (`E.Call` E.Hole) [1]
         applyFnToSelected = modifyExprContainingSelection (E.Hole `E.Call`) [0]
         wrapSelectedInFn = modifyExprContainingSelection (\expr -> E.Fn $ pure (P.Wildcard, expr)) [0]
@@ -625,6 +632,9 @@ isValidExprName name = case name of
     firstChar : restOfChars | isLower firstChar && all isAlphaNum restOfChars -> True
     _ -> False
 
+isValidDataConstructorName :: Name -> Bool
+isValidDataConstructorName = isValidTypeName
+
 isValidVarName :: Name -> Bool
 isValidVarName = isValidExprName
 
@@ -675,6 +685,21 @@ setCurrentDefName newName appState = case view present $ view locationHistory ap
         Nothing -> pure appState
     TypeDefView defKey -> handleTypeDefsChange $ appState & typeDefs . ix defKey . _1 .~ newName
     ExprDefView (defKey, _) -> handleExprDefsChange $ appState & exprDefs . ix defKey . _1 .~ newName
+
+initiateAddDataConstructor :: AppState -> EventM AppResourceName (Next AppState)
+initiateAddDataConstructor appState = continue $ appState & editState .~ AddingDataConstructor (editor EditorName (Just 1) "")
+
+commitAddDataConstructor :: AppState -> TypeDefKey -> Name -> EventM AppResourceName (Next AppState)
+commitAddDataConstructor appState typeDefKey name =
+    if isValidDataConstructorName name
+    then modifyTypeDef appState typeDefKey (T.dataConstructors %~ (++ [T.DataConstructor name []]))
+    else continue appState
+
+modifyTypeDef :: AppState -> TypeDefKey -> (TypeDef -> TypeDef) -> EventM AppResourceName (Next AppState)
+modifyTypeDef appState key modify = liftIO createNewAppState >>= continue where
+    createNewAppState = handleTypeDefsChange $ appState
+        & typeDefs . ix key . _2 %~ History.step modify
+        & editState .~ NotEditing
 
 printAutocompleteItem :: (Id -> Name) -> Selectable -> String
 printAutocompleteItem getExprName item = case item of
