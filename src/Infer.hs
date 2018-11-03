@@ -167,6 +167,8 @@ compose s1 s2 = Map.map (apply s1) s2 `Map.union` s1
 
 unify :: Eq t => T.Type t -> T.Type t -> Maybe (Substitution t)
 unify t1 t2 = case (t1, t2) of
+    (T.Wildcard, _) -> Just Map.empty
+    (_, T.Wildcard) -> Just Map.empty
     (T.Var v, t) -> either (const Nothing) Just $ bind v t
     (t, T.Var v) -> either (const Nothing) Just $ bind v t
     (T.Fn a1 b1, T.Fn a2 b2) -> do
@@ -186,6 +188,7 @@ bind var t = case t of
 
 typeVars :: T.Type t -> [T.VarId]
 typeVars t = case t of
+    T.Wildcard -> []
     T.Var var -> [var]
     T.Fn t1 t2 -> typeVars t1 `List.union` typeVars t2
     T.Constructor _ ts -> foldl List.union [] $ typeVars <$> ts
@@ -193,6 +196,7 @@ typeVars t = case t of
 
 apply :: Substitution t -> T.Type t -> T.Type t
 apply subst t = case t of
+    T.Wildcard -> T.Wildcard
     T.Var var -> Map.findWithDefault t var subst
     T.Fn t1 t2 -> T.Fn (apply subst t1) (apply subst t2)
     T.Constructor name ts -> T.Constructor name $ apply subst <$> ts

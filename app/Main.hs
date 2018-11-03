@@ -437,6 +437,7 @@ handleEventOnTypeDefView appState event (typeDefKey, selectedDataConstructorInde
         Vty.EvKey (Vty.KChar 'k') [] -> navDown
         Vty.EvKey (Vty.KChar 'o') [] -> initiateAddDataConstructor appState (selectedDataConstructorIndex + 1)
         Vty.EvKey (Vty.KChar 'O') [] -> initiateAddDataConstructor appState selectedDataConstructorIndex
+        Vty.EvKey (Vty.KChar ' ') [] -> addParamToDataConstructor appState typeDefKey selectedDataConstructorIndex
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     Naming editor -> case event of
@@ -456,6 +457,10 @@ handleEventOnTypeDefView appState event (typeDefKey, selectedDataConstructorInde
             then appState
             else appState & locationHistory . present . _TypeDefView . _2 .~ mod index dataConstructorCount
         dataConstructorCount = getDataConstructorCount appState typeDefKey
+
+addParamToDataConstructor :: AppState -> TypeDefKey -> Int -> EventM AppResourceName (Next AppState)
+addParamToDataConstructor appState typeDefKey dataConstructorIndex = modifyTypeDef typeDefKey f appState where
+    f = T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes %~ (T.Wildcard :)
 
 getDataConstructorCount :: AppState -> TypeDefKey -> Int
 getDataConstructorCount appState typeDefKey = length $ getDataConstructors appState typeDefKey

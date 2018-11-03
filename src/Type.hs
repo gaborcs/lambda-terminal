@@ -11,7 +11,8 @@ import GHC.Generics
 type VarId = Int
 
 data Type typeDefKey
-    = Var VarId
+    = Wildcard
+    | Var VarId
     | Fn (Type typeDefKey) (Type typeDefKey)
     | Constructor typeDefKey [Type typeDefKey]
     | Int
