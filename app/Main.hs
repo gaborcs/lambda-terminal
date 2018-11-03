@@ -445,7 +445,7 @@ handleEventOnTypeDefView appState event (typeDefKey, selectedDataConstructorInde
         _ -> handleEditorEvent event editor >>= setEditState appState . Naming
     AddingDataConstructor editor index -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
-        Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey index (head $ getEditContents editor) where
+        Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey index (head $ getEditContents editor)
         _ -> handleEditorEvent event editor >>= setEditState appState . flip AddingDataConstructor index
     _ -> continue appState
     where
