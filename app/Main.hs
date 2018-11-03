@@ -40,13 +40,17 @@ import qualified Type as T
 import qualified Value as V
 
 data AppState = AppState
-    { _typeDefs :: Map.Map TypeDefKey (Maybe Name, History TypeDef)
-    , _exprDefs :: Map.Map ExprDefKey (Maybe Name, History Expr)
+    { _typeDefs :: Map.Map TypeDefKey (Def TypeDef)
+    , _exprDefs :: Map.Map ExprDefKey (Def Expr)
     , _locationHistory :: History Location
     , _wrappingStyle :: WrappingStyle
     , _clipboard :: Clipboard
     , _editState :: EditState
     , _derivedState :: Maybe DerivedState
+    }
+data Def a = Def
+    { _name :: Maybe Name
+    , _history :: History a
     }
 data Clipboard = Clipboard
     { _clipboardExpr :: Maybe Expr
@@ -101,6 +105,8 @@ data Selection = ContainsSelection Path | WithinSelection | NoSelection deriving
 makeLenses ''AppState
 makeLenses ''Clipboard
 makeLenses ''DerivedState
+makeLenses ''Def
+makePrisms ''Def
 makePrisms ''Location
 makePrisms ''Selectable
 
@@ -111,8 +117,8 @@ getInitialState :: IO AppState
 getInitialState = do
     readTypeDefsResult <- tryJust (guard . isDoesNotExistError) readTypeDefs
     readExprDefsResult <- tryJust (guard . isDoesNotExistError) readExprDefs
-    let typeDefs = either (const Map.empty) (Map.map $ fmap History.create) readTypeDefsResult
-    let exprDefs = either (const Map.empty) (Map.map $ fmap History.create) readExprDefsResult
+    let typeDefs = either (const Map.empty) (Map.map $ review _Def . fmap History.create) readTypeDefsResult
+    let exprDefs = either (const Map.empty) (Map.map $ review _Def . fmap History.create) readExprDefsResult
     let clipboard = Clipboard Nothing Nothing
     let defKeys = (TypeDefKey <$> Map.keys typeDefs) ++ (ExprDefKey <$> Map.keys exprDefs)
     let locationHistory = History.create $ DefListView $ listToMaybe defKeys
@@ -127,7 +133,7 @@ readTypeDefs = do
 writeTypeDefs :: AppState -> IO ()
 writeTypeDefs appState = do
     path <- getTypeDefsPath
-    writeFile path $ unlines $ map show $ Map.toList $ fmap (view present) <$> view typeDefs appState
+    writeFile path $ unlines $ map show $ Map.toList $ fmap (view present) . view _Def <$> view typeDefs appState
 
 readExprDefs :: IO (Map.Map TypeDefKey (Maybe Name, Expr))
 readExprDefs = do
@@ -138,7 +144,7 @@ readExprDefs = do
 writeExprDefs :: AppState -> IO ()
 writeExprDefs appState = do
     path <- getExprDefsPath
-    writeFile path $ unlines $ map show $ Map.toList $ fmap (view present) <$> view exprDefs appState
+    writeFile path $ unlines $ map show $ Map.toList $ fmap (view present) . view _Def <$> view exprDefs appState
 
 getTypeDefsPath :: IO FilePath
 getTypeDefsPath = do
@@ -178,10 +184,10 @@ getDefName appState key = case key of
     ExprDefKey k -> getExprName appState k
 
 getTypeName :: AppState -> TypeDefKey -> Name
-getTypeName appState key = fromMaybe "Unnamed" $ fst $ view typeDefs appState Map.! key
+getTypeName appState key = fromMaybe "Unnamed" $ view name $ view typeDefs appState Map.! key
 
 getExprName :: AppState -> ExprDefKey -> Name
-getExprName appState key = fromMaybe "unnamed" $ fst $ view exprDefs appState Map.! key
+getExprName appState key = fromMaybe "unnamed" $ view name $ view exprDefs appState Map.! key
 
 grayIf :: Bool -> Widget n -> Widget n
 grayIf cond = if cond then modifyDefAttr $ flip Vty.withForeColor gray else id
@@ -224,7 +230,7 @@ drawExprDefView appState (defKey, selectionPath) = ui where
     renderedTitle = case editState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ fromMaybe "unnamed" maybeDefName
-    (maybeDefName, defHistory) = defs Map.! defKey
+    (Def maybeDefName defHistory) = defs Map.! defKey
     coloredExpr = modifyDefAttr (`Vty.withForeColor` gray) renderedExpr -- unselected parts of the expression are gray
     expr = view present defHistory
     (_, renderedExpr) = renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError (renderExpr appState expr)
@@ -406,12 +412,12 @@ handleEventOnDefListView appState event maybeSelectedDefKey = case event of
         defKeys = getDefKeys appState
         addNewTypeDef = liftIO createNewAppState >>= continue where
             createNewAppState = handleTypeDefsChange $ appState
-                & typeDefs %~ Map.insert newDefKey (Nothing, History.create $ T.TypeDef [] [])
+                & typeDefs %~ Map.insert newDefKey (Def Nothing $ History.create $ T.TypeDef [] [])
                 & locationHistory %~ push (TypeDefView (newDefKey, 0)) . (present . _DefListView ?~ ExprDefKey newDefKey)
             newDefKey = createNewDefKey $ view typeDefs appState
         addNewExprDef = liftIO createNewAppState >>= continue where
             createNewAppState = handleExprDefsChange $ appState
-                & exprDefs %~ Map.insert newDefKey (Nothing, History.create E.Hole)
+                & exprDefs %~ Map.insert newDefKey (Def Nothing $ History.create E.Hole)
                 & locationHistory %~ push (ExprDefView (newDefKey, [])) . (present . _DefListView ?~ ExprDefKey newDefKey)
             newDefKey = createNewDefKey $ view exprDefs appState
         createNewDefKey defs = if null defs then 0 else fst (Map.findMax defs) + 1
@@ -438,6 +444,8 @@ handleEventOnTypeDefView appState event (typeDefKey, selectedDataConstructorInde
         Vty.EvKey (Vty.KChar 'o') [] -> initiateAddDataConstructor appState (selectedDataConstructorIndex + 1)
         Vty.EvKey (Vty.KChar 'O') [] -> initiateAddDataConstructor appState selectedDataConstructorIndex
         Vty.EvKey (Vty.KChar ' ') [] -> addParamToDataConstructor appState typeDefKey selectedDataConstructorIndex
+        Vty.EvKey (Vty.KChar 'u') [] -> undo
+        Vty.EvKey (Vty.KChar 'r') [] -> redo
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     Naming editor -> case event of
@@ -457,6 +465,11 @@ handleEventOnTypeDefView appState event (typeDefKey, selectedDataConstructorInde
             then appState
             else appState & locationHistory . present . _TypeDefView . _2 .~ mod index dataConstructorCount
         dataConstructorCount = getDataConstructorCount appState typeDefKey
+        undo = modifyTypeDefs appState $ ix typeDefKey . history %~ goBack
+        redo = modifyTypeDefs appState $ ix typeDefKey . history %~ goForward
+
+modifyTypeDefs :: AppState -> (Map.Map TypeDefKey (Def TypeDef) -> Map.Map TypeDefKey (Def TypeDef)) -> EventM AppResourceName (Next AppState)
+modifyTypeDefs appState modify = liftIO (handleTypeDefsChange $ appState & typeDefs %~ modify) >>= continue
 
 addParamToDataConstructor :: AppState -> TypeDefKey -> Int -> EventM AppResourceName (Next AppState)
 addParamToDataConstructor appState typeDefKey dataConstructorIndex = modifyTypeDef typeDefKey f appState where
@@ -466,7 +479,7 @@ getDataConstructorCount :: AppState -> TypeDefKey -> Int
 getDataConstructorCount appState typeDefKey = length $ getDataConstructors appState typeDefKey
 
 getDataConstructors :: AppState -> TypeDefKey -> [DataConstructor]
-getDataConstructors appState typeDefKey = view (typeDefs . ix typeDefKey . _2 . present . T.dataConstructors) appState
+getDataConstructors appState typeDefKey = view (typeDefs . ix typeDefKey . history . present . T.dataConstructors) appState
 
 setEditState :: AppState -> EditState -> EventM AppResourceName (Next AppState)
 setEditState appState newEditState = continue $ appState & editState .~ newEditState
@@ -557,7 +570,7 @@ handleEventOnExprDefView appState event (defKey, selectionPath) = case currentEd
         currentExprDefs = view exprDefs appState
         exprDefKeys = Map.keys currentExprDefs
         getCurrentExprName = getExprName appState
-        defHistory = snd $ currentExprDefs Map.! defKey
+        defHistory = view history $ currentExprDefs Map.! defKey
         defExpr = view present defHistory
         currentClipboard = view clipboard appState
         currentEditState = view editState appState
@@ -611,7 +624,7 @@ handleEventOnExprDefView appState event (defKey, selectionPath) = case currentEd
         modifyExprContainingSelection = modifyExpr $ dropPatternPartOfPath defExpr selectionPath
         modifyExpr path modify selectionPathInModifiedExpr = liftIO createNewAppState >>= continue where
             createNewAppState = handleExprDefsChange $ appState
-                & exprDefs . ix defKey . _2 %~ push newExpr
+                & exprDefs . ix defKey . history %~ push newExpr
                 & locationHistory . present . _ExprDefView . _2 .~ newSelectionPath
             newExpr = modifyAtPathInExpr path modify id defExpr
             newSelectionPath = path ++ selectionPathInModifiedExpr
@@ -635,7 +648,7 @@ handleEventOnExprDefView appState event (defKey, selectionPath) = case currentEd
             Nothing -> continue appState
         modifyExprDef newExpr = liftIO createNewAppState >>= continue where
             createNewAppState = handleExprDefsChange $ appState
-                & exprDefs . ix defKey . _2 %~ push newExpr
+                & exprDefs . ix defKey . history %~ push newExpr
                 & editState .~ NotEditing
         switchToNextWrappingStyle = modifyWrappingStyle getNext
         switchToPrevWrappingStyle = modifyWrappingStyle getPrev
@@ -651,7 +664,7 @@ handleEventOnExprDefView appState event (defKey, selectionPath) = case currentEd
         redo = modifyDefHistory goForward
         modifyDefHistory modify = liftIO createAppState >>= continue where
             createAppState = handleExprDefsChange $ appState
-                & exprDefs . ix defKey . _2 .~ newDefHistory
+                & exprDefs . ix defKey . history .~ newDefHistory
                 & locationHistory . present . _ExprDefView . _2 %~ modifySelectionPath
             newDefHistory = modify defHistory
             modifySelectionPath = maybe id const $ getDiffPathBetweenExprs defExpr $ view present newDefHistory
@@ -698,8 +711,8 @@ initiateRenameDefinition appState = continue $ appState & editState .~ Naming in
 
 getCurrentDefName :: AppState -> Maybe Name
 getCurrentDefName appState = case view present $ view locationHistory appState of
-    TypeDefView (defKey, _) -> preview (typeDefs . ix defKey) appState >>= fst
-    ExprDefView (defKey, _) -> preview (exprDefs . ix defKey) appState >>= fst
+    TypeDefView (defKey, _) -> join $ preview (typeDefs . ix defKey . name) appState
+    ExprDefView (defKey, _) -> join $ preview (exprDefs . ix defKey . name) appState
     _ -> Nothing
 
 cancelEdit :: AppState -> EventM AppResourceName (Next AppState)
@@ -713,12 +726,9 @@ commitDefName appState newName isValid = case newName of
 
 setCurrentDefName :: Maybe Name -> AppState -> IO AppState
 setCurrentDefName newName appState = case view present $ view locationHistory appState of
-    DefListView maybeDefKey -> case maybeDefKey of
-        Just (TypeDefKey defKey) -> handleTypeDefsChange $ appState & typeDefs . ix defKey . _1 .~ newName
-        Just (ExprDefKey defKey) -> handleExprDefsChange $ appState & exprDefs . ix defKey . _1 .~ newName
-        Nothing -> pure appState
-    TypeDefView (defKey, _) -> handleTypeDefsChange $ appState & typeDefs . ix defKey . _1 .~ newName
-    ExprDefView (defKey, _) -> handleExprDefsChange $ appState & exprDefs . ix defKey . _1 .~ newName
+    DefListView _ -> error "setCurrentDefName is not implemented for DefListView"
+    TypeDefView (defKey, _) -> handleTypeDefsChange $ appState & typeDefs . ix defKey . name .~ newName
+    ExprDefView (defKey, _) -> handleExprDefsChange $ appState & exprDefs . ix defKey . name .~ newName
 
 initiateAddDataConstructor :: AppState -> AtIndex -> EventM AppResourceName (Next AppState)
 initiateAddDataConstructor appState index =
@@ -734,9 +744,7 @@ commitAddDataConstructor appState typeDefKey index name =
     else continue appState
 
 modifyTypeDef :: TypeDefKey -> (TypeDef -> TypeDef) -> AppState -> EventM AppResourceName (Next AppState)
-modifyTypeDef key modify appState = liftIO createNewAppState >>= continue where
-    createNewAppState = handleTypeDefsChange $ appState
-        & typeDefs . ix key . _2 %~ History.step modify
+modifyTypeDef key modify appState = modifyTypeDefs appState $ ix key . history %~ History.step modify where
 
 printAutocompleteItem :: (ExprDefKey -> Name) -> Selectable -> String
 printAutocompleteItem getExprName item = case item of
@@ -820,14 +828,14 @@ handleExprDefsChange appState = do
 updateDerivedState :: AppState -> IO AppState
 updateDerivedState appState = do
     let getCurrentTypeDef = getTypeDef $ view typeDefs appState
-    let currentExprDefs = view present . snd <$> view exprDefs appState
+    let presentExprDefs = view (history . present) <$> view exprDefs appState
     let location = view present $ view locationHistory appState
-    newDerivedState <- traverse (createDerivedState getCurrentTypeDef currentExprDefs) (preview _ExprDefView location)
+    newDerivedState <- traverse (createDerivedState getCurrentTypeDef presentExprDefs) (preview _ExprDefView location)
     return $ appState & derivedState .~ newDerivedState
 
 updateEvalResult :: AppState -> IO AppState
 updateEvalResult appState = do
-    let defExprs = view present . snd <$> view exprDefs appState
+    let defExprs = view (history . present) <$> view exprDefs appState
     let location = view present $ view locationHistory appState
     newEvalResult <- traverse (createEvalResult defExprs) (preview _ExprDefView location)
     return $ appState & derivedState . _Just . evalResult %~ flip fromMaybe newEvalResult
@@ -839,8 +847,8 @@ createDerivedState getTypeDef defs location@(exprName, _) =
 createInferResult :: (TypeDefKey -> TypeDef) -> Map.Map ExprDefKey Expr -> ExprDefKey -> InferResult
 createInferResult getTypeDef defs defKey = Infer.inferType (T.getConstructorType getTypeDef) defs $ defs Map.! defKey
 
-getTypeDef :: Map.Map TypeDefKey (n, History TypeDef) -> TypeDefKey -> TypeDef
-getTypeDef typeDefs key = view present . snd $ typeDefs Map.! key
+getTypeDef :: Map.Map TypeDefKey (Def TypeDef) -> TypeDefKey -> TypeDef
+getTypeDef typeDefs key = typeDefs Map.! key ^. history . present
 
 createEvalResult :: Map.Map TypeDefKey Expr -> ExprDefViewLocation -> IO EvalResult
 createEvalResult defs (defKey, selectionPath) = do
