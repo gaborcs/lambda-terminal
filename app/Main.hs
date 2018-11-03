@@ -55,7 +55,7 @@ data Clipboard = Clipboard
 data EditState
     = NotEditing
     | Naming EditorState
-    | AddingDataConstructor EditorState
+    | AddingDataConstructor EditorState AtIndex
     | SelectionRenaming EditorState
     | SelectionEditing EditorState (Maybe AutocompleteState)
 data DerivedState = DerivedState
@@ -86,6 +86,7 @@ type TypeDefViewLocation = (TypeDefKey, SelectedDataConstructorIndex)
 type SelectedDataConstructorIndex = Int
 type ExprDefViewLocation = (ExprDefKey, Path)
 type EditorState = Editor String AppResourceName
+type AtIndex = Int
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
 type AutocompleteList = ListWidget.List AppResourceName Selectable
 type EditorExtent = Extent AppResourceName
@@ -194,7 +195,8 @@ drawTypeDefView appState (typeDefKey, selectedDataConstructorIndex) = [ rendered
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ getTypeName appState typeDefKey
     body = vBox $ case view editState appState of
-        AddingDataConstructor editor -> renderedDataConstructors ++ [renderEditor (str . head) True editor]
+        AddingDataConstructor editor index -> insertAt index renderedEditor renderedDataConstructors where
+            renderedEditor = renderEditor (str . head) True editor
         _ -> renderedDataConstructors
     renderedDataConstructors = zipWith grayIfNotSelected [0..] $ renderDataConstructor <$> dataConstructors
     grayIfNotSelected index = grayIf $ index /= selectedDataConstructorIndex
@@ -202,6 +204,9 @@ drawTypeDefView appState (typeDefKey, selectedDataConstructorIndex) = [ rendered
         printedParamTypes = printParamType <$> paramTypes
         printParamType t = inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) varNames t)
     T.TypeDef varNames dataConstructors = getTypeDef (view typeDefs appState) typeDefKey
+
+insertAt :: Int -> a -> [a] -> [a]
+insertAt index item = (!! index) . iterate _tail %~ (item :)
 
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
 drawExprDefView appState (defKey, selectionPath) = ui where
@@ -430,17 +435,18 @@ handleEventOnTypeDefView appState event (typeDefKey, selectedDataConstructorInde
         Vty.EvKey Vty.KDown [] -> navDown
         Vty.EvKey (Vty.KChar 'i') [] -> navUp
         Vty.EvKey (Vty.KChar 'k') [] -> navDown
-        Vty.EvKey Vty.KEnter [] -> initiateAddDataConstructor appState
+        Vty.EvKey (Vty.KChar 'o') [] -> initiateAddDataConstructor appState (selectedDataConstructorIndex + 1)
+        Vty.EvKey (Vty.KChar 'O') [] -> initiateAddDataConstructor appState selectedDataConstructorIndex
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     Naming editor -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitDefName appState (head $ getEditContents editor) isValidTypeName
         _ -> handleEditorEvent event editor >>= setEditState appState . Naming
-    AddingDataConstructor editor -> case event of
+    AddingDataConstructor editor index -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
-        Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey (head $ getEditContents editor)
-        _ -> handleEditorEvent event editor >>= setEditState appState . AddingDataConstructor
+        Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey index (head $ getEditContents editor) where
+        _ -> handleEditorEvent event editor >>= setEditState appState . flip AddingDataConstructor index
     _ -> continue appState
     where
         navUp = setSelectedDataConstructor $ selectedDataConstructorIndex - 1
@@ -709,20 +715,23 @@ setCurrentDefName newName appState = case view present $ view locationHistory ap
     TypeDefView (defKey, _) -> handleTypeDefsChange $ appState & typeDefs . ix defKey . _1 .~ newName
     ExprDefView (defKey, _) -> handleExprDefsChange $ appState & exprDefs . ix defKey . _1 .~ newName
 
-initiateAddDataConstructor :: AppState -> EventM AppResourceName (Next AppState)
-initiateAddDataConstructor appState = continue $ appState & editState .~ AddingDataConstructor (editor EditorName (Just 1) "")
+initiateAddDataConstructor :: AppState -> AtIndex -> EventM AppResourceName (Next AppState)
+initiateAddDataConstructor appState index =
+    continue $ appState & editState .~ AddingDataConstructor (editor EditorName (Just 1) "") index
 
-commitAddDataConstructor :: AppState -> TypeDefKey -> Name -> EventM AppResourceName (Next AppState)
-commitAddDataConstructor appState typeDefKey name =
+commitAddDataConstructor :: AppState -> TypeDefKey -> Int -> Name -> EventM AppResourceName (Next AppState)
+commitAddDataConstructor appState typeDefKey index name =
     if isValidDataConstructorName name
-    then modifyTypeDef appState typeDefKey (T.dataConstructors %~ (++ [T.DataConstructor name []]))
+    then appState
+        & editState .~ NotEditing
+        & locationHistory . present . _TypeDefView . _2 .~ index
+        & modifyTypeDef typeDefKey (T.dataConstructors %~ insertAt index (T.DataConstructor name []))
     else continue appState
 
-modifyTypeDef :: AppState -> TypeDefKey -> (TypeDef -> TypeDef) -> EventM AppResourceName (Next AppState)
-modifyTypeDef appState key modify = liftIO createNewAppState >>= continue where
+modifyTypeDef :: TypeDefKey -> (TypeDef -> TypeDef) -> AppState -> EventM AppResourceName (Next AppState)
+modifyTypeDef key modify appState = liftIO createNewAppState >>= continue where
     createNewAppState = handleTypeDefsChange $ appState
         & typeDefs . ix key . _2 %~ History.step modify
-        & editState .~ NotEditing
 
 printAutocompleteItem :: (ExprDefKey -> Name) -> Selectable -> String
 printAutocompleteItem getExprName item = case item of
