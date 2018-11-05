@@ -192,7 +192,7 @@ getDefName appState key = case key of
     ExprDefKey k -> getExprName appState k
 
 getTypeName :: AppState -> TypeDefKey -> Name
-getTypeName appState key = fromMaybe "Unnamed" $ view (present . T.typeConstructor . T.name) $ view typeDefs appState Map.! key
+getTypeName appState key = fromMaybe "Unnamed" $ view (present . T.typeConstructor . T.typeConstructorName) $ view typeDefs appState Map.! key
 
 getExprName :: AppState -> ExprDefKey -> Name
 getExprName appState key = fromMaybe "unnamed" $ view (present . name) $ view exprDefs appState Map.! key
@@ -216,7 +216,7 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ rendered
     grayIfNotSelected index = grayIf $ selection /= DataConstructorSelection index
     renderDataConstructor (T.DataConstructor name paramTypes) = str $ unwords $ name : printedParamTypes where
         printedParamTypes = printParamType <$> paramTypes
-        printParamType t = inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) (view T.vars typeConstructor) t)
+        printParamType t = inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) (view T.typeConstructorParams typeConstructor) t)
     T.TypeDef typeConstructor dataConstructors = getTypeDef (view typeDefs appState) typeDefKey
 
 insertAt :: Int -> a -> [a] -> [a]
@@ -725,7 +725,7 @@ initiateRenameDefinition appState = continue $ appState & editState .~ Naming in
 
 getCurrentDefName :: AppState -> Maybe Name
 getCurrentDefName appState = case view present $ view locationHistory appState of
-    TypeDefView loc -> join $ preview (typeDefs . ix (view typeDefKey loc) . present . T.typeConstructor . T.name) appState
+    TypeDefView loc -> join $ preview (typeDefs . ix (view typeDefKey loc) . present . T.typeConstructor . T.typeConstructorName) appState
     ExprDefView loc -> join $ preview (exprDefs . ix (view exprDefKey loc) . present . name) appState
     _ -> Nothing
 
@@ -741,7 +741,7 @@ commitDefName appState newName isValid = case newName of
 setCurrentDefName :: Maybe Name -> AppState -> EventM AppResourceName (Next AppState)
 setCurrentDefName newName appState = case view present $ view locationHistory appState of
     DefListView _ -> error "setCurrentDefName is not implemented for DefListView"
-    TypeDefView loc -> modifyTypeDef (view typeDefKey loc) (T.typeConstructor . T.name .~ newName) appState
+    TypeDefView loc -> modifyTypeDef (view typeDefKey loc) (T.typeConstructor . T.typeConstructorName .~ newName) appState
     ExprDefView loc -> modifyExprDef (view exprDefKey loc) (name .~ newName) appState
 
 initiateAddDataConstructor :: AppState -> AtIndex -> EventM AppResourceName (Next AppState)
