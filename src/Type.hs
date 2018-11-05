@@ -19,8 +19,13 @@ data Type typeDefKey
     deriving (Eq, Read, Show, Functor)
 
 data TypeDef typeDefKey = TypeDef
-    { _varNames :: [String]
+    { _typeConstructor :: TypeConstructor
     , _dataConstructors :: [DataConstructor typeDefKey]
+    } deriving (Read, Show)
+
+data TypeConstructor = TypeConstructor
+    { _name :: Maybe String
+    , _vars :: [String]
     } deriving (Read, Show)
 
 data DataConstructor typeDefKey = DataConstructor
@@ -35,13 +40,14 @@ data DataConstructorKey typeDefKey = DataConstructorKey
 
 makePrisms ''Type
 makeLenses ''TypeDef
+makeLenses ''TypeConstructor
 makeLenses ''DataConstructor
 makeLenses ''DataConstructorKey
 
-getConstructorType :: (t -> TypeDef t) -> DataConstructorKey t -> Maybe (Type t)
-getConstructorType getTypeDef (DataConstructorKey typeDefKey constructorName) = foldr Fn resultType <$> maybeParamTypes where
-    TypeDef typeVarNames constructors = getTypeDef typeDefKey
+getDataConstructorType :: (t -> TypeDef t) -> DataConstructorKey t -> Maybe (Type t)
+getDataConstructorType getTypeDef (DataConstructorKey typeDefKey constructorName) = foldr Fn resultType <$> maybeParamTypes where
+    TypeDef typeConstructor dataConstructors = getTypeDef typeDefKey
     resultType = Constructor typeDefKey typeVars
-    typeVars = Var <$> [0 .. length typeVarNames - 1]
+    typeVars = Var <$> [0 .. length (view vars typeConstructor) - 1]
     maybeParamTypes = view dataConstructorParamTypes <$> maybeConstructorDef
-    maybeConstructorDef = find ((== constructorName) . view dataConstructorName) constructors
+    maybeConstructorDef = find ((== constructorName) . view dataConstructorName) dataConstructors
