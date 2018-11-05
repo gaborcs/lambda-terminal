@@ -59,6 +59,7 @@ data Clipboard = Clipboard
 data EditState
     = NotEditing
     | Naming EditorState
+    | AddingTypeConstructorParam EditorState
     | AddingDataConstructor EditorState AtIndex
     | SelectionRenaming EditorState
     | SelectionEditing EditorState (Maybe AutocompleteState)
@@ -182,7 +183,7 @@ draw appState = case view present $ view locationHistory appState of
     ExprDefView location -> drawExprDefView appState location
 
 drawDefListView :: AppState -> Maybe SelectedDefKey -> [AppWidget]
-drawDefListView appState maybeSelectedDefKey = [ renderTitle "Definitions" <=> renderedList ] where
+drawDefListView appState maybeSelectedDefKey = [ renderTitle (str "Definitions") <=> renderedList ] where
     renderedList = vBox $ renderItem <$> getDefKeys appState
     renderItem key = grayIf (Just key /= maybeSelectedDefKey) (str $ getDefName appState key)
 
@@ -207,7 +208,11 @@ drawTypeDefView :: AppState -> TypeDefViewLocation -> [AppWidget]
 drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ renderedTitle <=> body ] where
     renderedTitle = case view editState appState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
-        _ -> renderTitle $ getTypeName appState typeDefKey
+        _ -> renderTitle $ hBox $ intersperse (str " ") $ str typeName : case view editState appState of
+            AddingTypeConstructorParam editor -> renderExpandingSingleLineEditor editor : renderedTypeConstructorParams
+            _ -> renderedTypeConstructorParams
+    typeName = getTypeName appState typeDefKey
+    renderedTypeConstructorParams = str <$> view T.typeConstructorParams typeConstructor
     body = vBox $ case view editState appState of
         AddingDataConstructor editor index -> insertAt index renderedEditor renderedDataConstructors where
             renderedEditor = renderEditor (str . head) True editor
@@ -221,6 +226,10 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ rendered
 
 insertAt :: Int -> a -> [a] -> [a]
 insertAt index item = (!! index) . iterate _tail %~ (item :)
+
+renderExpandingSingleLineEditor :: (Ord n, Show n) => Editor String n -> Widget n
+renderExpandingSingleLineEditor editor = hLimit (textWidth editStr + 1) $ renderEditor (str . head) True editor where
+    editStr = head $ getEditContents editor
 
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
 drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
@@ -237,7 +246,7 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     layout = renderedTitle <=> viewport Viewport Both coloredExpr <=> str bottomStr
     renderedTitle = case editState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
-        _ -> renderTitle $ getExprName appState defKey
+        _ -> renderTitle $ str $ getExprName appState defKey
     defHistory = defs Map.! defKey
     coloredExpr = modifyDefAttr (`Vty.withForeColor` gray) renderedExpr -- unselected parts of the expression are gray
     def = view present defHistory
@@ -252,8 +261,8 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
         Error -> ""
         Value v -> fromMaybe "" $ prettyPrintValue (view T.constructorName) v
 
-renderTitle :: String -> Widget n
-renderTitle title = hBorderWithLabel $ str $ "  " ++ title ++ "  "
+renderTitle :: Widget n -> Widget n
+renderTitle title = hBorderWithLabel $ str "  " <+> title <+> str "  "
 
 renderAutocompleteItem :: Bool -> String -> Widget n
 renderAutocompleteItem isSelected text = color $ padRight Max $ str text where
@@ -277,9 +286,7 @@ renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case
         makeRed = modifyDefAttr $ flip Vty.withForeColor Vty.red
         (renderResultType, widget) = renderer wrappingStyle $ RenderChild renderChild
         renderChild index = renderWithAttrs wrappingStyle editState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
-        renderSelectionEditor editor = (OneWord, visible . highlight $ hLimit (textWidth editStr + 1) renderedEditor) where
-            editStr = head $ getEditContents editor
-            renderedEditor = renderEditor (str . head) True editor
+        renderSelectionEditor editor = (OneWord, visible . highlight $ renderExpandingSingleLineEditor editor)
 
 renderExpr :: AppState -> Expr -> Renderer
 renderExpr appState expr wrappingStyle (RenderChild renderChild) = case expr of
@@ -456,7 +463,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar 'o') [] -> initiateAddDataConstructorBelowSelection
         Vty.EvKey (Vty.KChar 'O') [] -> initiateAddDataConstructorAboveSelection
         Vty.EvKey (Vty.KChar ' ') [] -> case selection of
-            TypeConstructorSelection -> continue appState
+            TypeConstructorSelection -> initiateAddTypeConstructorParam appState
             DataConstructorSelection index -> addParamToDataConstructor appState typeDefKey index
         Vty.EvKey (Vty.KChar 'u') [] -> undo
         Vty.EvKey (Vty.KChar 'r') [] -> redo
@@ -466,6 +473,10 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitDefName appState (head $ getEditContents editor) isValidTypeName
         _ -> handleEditorEvent event editor >>= setEditState appState . Naming
+    AddingTypeConstructorParam editor -> case event of
+        Vty.EvKey Vty.KEsc [] -> cancelEdit appState
+        Vty.EvKey Vty.KEnter [] -> commitAddTypeConstructorParam appState typeDefKey (head $ getEditContents editor)
+        _ -> handleEditorEvent event editor >>= setEditState appState . AddingTypeConstructorParam
     AddingDataConstructor editor index -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey index (head $ getEditContents editor)
@@ -744,9 +755,21 @@ setCurrentDefName newName appState = case view present $ view locationHistory ap
     TypeDefView loc -> modifyTypeDef (view typeDefKey loc) (T.typeConstructor . T.typeConstructorName .~ newName) appState
     ExprDefView loc -> modifyExprDef (view exprDefKey loc) (name .~ newName) appState
 
+initiateAddTypeConstructorParam :: AppState -> EventM AppResourceName (Next AppState)
+initiateAddTypeConstructorParam appState =
+    continue $ appState & editState .~ AddingTypeConstructorParam (editor EditorName (Just 1) "")
+
 initiateAddDataConstructor :: AppState -> AtIndex -> EventM AppResourceName (Next AppState)
 initiateAddDataConstructor appState index =
     continue $ appState & editState .~ AddingDataConstructor (editor EditorName (Just 1) "") index
+
+commitAddTypeConstructorParam :: AppState -> TypeDefKey -> Name -> EventM AppResourceName (Next AppState)
+commitAddTypeConstructorParam appState typeDefKey name =
+    if isValidVarName name
+    then appState
+        & editState .~ NotEditing
+        & modifyTypeDef typeDefKey (T.typeConstructor . T.typeConstructorParams %~ (name :))
+    else continue appState
 
 commitAddDataConstructor :: AppState -> TypeDefKey -> Int -> Name -> EventM AppResourceName (Next AppState)
 commitAddDataConstructor appState typeDefKey index name =
