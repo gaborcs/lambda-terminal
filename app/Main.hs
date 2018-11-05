@@ -456,10 +456,10 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
         Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
         Vty.EvKey (Vty.KChar 'N') [] -> initiateRenameDefinition appState
-        Vty.EvKey Vty.KUp [] -> navUp
-        Vty.EvKey Vty.KDown [] -> navDown
-        Vty.EvKey (Vty.KChar 'i') [] -> navUp
-        Vty.EvKey (Vty.KChar 'k') [] -> navDown
+        Vty.EvKey Vty.KLeft [] -> navBackward
+        Vty.EvKey Vty.KRight [] -> navForward
+        Vty.EvKey (Vty.KChar 'j') [] -> navBackward
+        Vty.EvKey (Vty.KChar 'l') [] -> navForward
         Vty.EvKey (Vty.KChar 'o') [] -> initiateAddDataConstructorBelowSelection
         Vty.EvKey (Vty.KChar 'O') [] -> initiateAddDataConstructorAboveSelection
         Vty.EvKey (Vty.KChar ' ') [] -> case selection of
@@ -483,10 +483,10 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         _ -> handleEditorEvent event editor >>= setEditState appState . flip AddingDataConstructor index
     _ -> continue appState
     where
-        navUp = setSelection $ case selection of
+        navBackward = setSelection $ case selection of
             TypeConstructorSelection -> TypeConstructorSelection
             DataConstructorSelection index -> if index > 0 then DataConstructorSelection $ index - 1 else TypeConstructorSelection
-        navDown = setSelection $ case selection of
+        navForward = setSelection $ case selection of
             TypeConstructorSelection -> if dataConstructorCount > 0 then DataConstructorSelection 0 else TypeConstructorSelection
             DataConstructorSelection index -> DataConstructorSelection $ min (index + 1) (dataConstructorCount - 1)
         setSelection newSelection = continue $ appState
