@@ -86,7 +86,11 @@ data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Boun
 data Location = DefListView (Maybe SelectedDefKey) | TypeDefView TypeDefViewLocation | ExprDefView ExprDefViewLocation
 type SelectedDefKey = DefKey
 data DefKey = TypeDefKey TypeDefKey | ExprDefKey ExprDefKey deriving Eq
-type TypeDefViewLocation = (TypeDefKey, SelectedDataConstructorIndex)
+data TypeDefViewLocation = TypeDefViewLocation
+    { _typeDefKey :: TypeDefKey
+    , _typeDefViewSelection :: TypeDefViewSelection
+    }
+data TypeDefViewSelection = TypeConstructorSelection | DataConstructorSelection SelectedDataConstructorIndex deriving Eq
 type SelectedDataConstructorIndex = Int
 type ExprDefViewLocation = (ExprDefKey, Path)
 type EditorState = Editor String AppResourceName
@@ -104,6 +108,7 @@ data Selection = ContainsSelection Path | WithinSelection | NoSelection deriving
 
 makeLenses ''AppState
 makeLenses ''ExprDef
+makeLenses ''TypeDefViewLocation
 makeLenses ''Clipboard
 makeLenses ''DerivedState
 makePrisms ''Location
@@ -195,7 +200,7 @@ gray :: Vty.Color
 gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark backgrounds
 
 drawTypeDefView :: AppState -> TypeDefViewLocation -> [AppWidget]
-drawTypeDefView appState (typeDefKey, selectedDataConstructorIndex) = [ renderedTitle <=> body ] where
+drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ renderedTitle <=> body ] where
     renderedTitle = case view editState appState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ getTypeName appState typeDefKey
@@ -204,7 +209,7 @@ drawTypeDefView appState (typeDefKey, selectedDataConstructorIndex) = [ rendered
             renderedEditor = renderEditor (str . head) True editor
         _ -> renderedDataConstructors
     renderedDataConstructors = zipWith grayIfNotSelected [0..] $ renderDataConstructor <$> dataConstructors
-    grayIfNotSelected index = grayIf $ index /= selectedDataConstructorIndex
+    grayIfNotSelected index = grayIf $ selection /= DataConstructorSelection index
     renderDataConstructor (T.DataConstructor name paramTypes) = str $ unwords $ name : printedParamTypes where
         printedParamTypes = printParamType <$> paramTypes
         printParamType t = inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) (view T.vars typeConstructor) t)
@@ -412,8 +417,10 @@ handleEventOnDefListView appState event maybeSelectedDefKey = case event of
         addNewTypeDef = liftIO createNewAppState >>= continue where
             createNewAppState = handleTypeDefsChange $ appState
                 & typeDefs %~ Map.insert newDefKey (History.create $ T.TypeDef (T.TypeConstructor Nothing []) [])
-                & locationHistory %~ push (TypeDefView (newDefKey, 0)) . (present . _DefListView ?~ ExprDefKey newDefKey)
+                & locationHistory %~ push newLocation . selectNewDef
+            newLocation = TypeDefView (TypeDefViewLocation newDefKey TypeConstructorSelection)
             newDefKey = createNewDefKey $ view typeDefs appState
+            selectNewDef = present . _DefListView ?~ ExprDefKey newDefKey
         addNewExprDef = liftIO createNewAppState >>= continue where
             createNewAppState = handleExprDefsChange $ appState
                 & exprDefs %~ Map.insert newDefKey (History.create $ ExprDef Nothing E.Hole)
@@ -431,7 +438,7 @@ getExprDefKeys :: AppState -> [ExprDefKey]
 getExprDefKeys = Map.keys . view exprDefs
 
 handleEventOnTypeDefView :: AppState -> Vty.Event -> TypeDefViewLocation -> EventM AppResourceName (Next AppState)
-handleEventOnTypeDefView appState event (typeDefKey, selectedDataConstructorIndex) = case view editState appState of
+handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selection) = case view editState appState of
     NotEditing -> case event of
         Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
         Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
@@ -440,9 +447,11 @@ handleEventOnTypeDefView appState event (typeDefKey, selectedDataConstructorInde
         Vty.EvKey Vty.KDown [] -> navDown
         Vty.EvKey (Vty.KChar 'i') [] -> navUp
         Vty.EvKey (Vty.KChar 'k') [] -> navDown
-        Vty.EvKey (Vty.KChar 'o') [] -> initiateAddDataConstructor appState (selectedDataConstructorIndex + 1)
-        Vty.EvKey (Vty.KChar 'O') [] -> initiateAddDataConstructor appState selectedDataConstructorIndex
-        Vty.EvKey (Vty.KChar ' ') [] -> addParamToDataConstructor appState typeDefKey selectedDataConstructorIndex
+        Vty.EvKey (Vty.KChar 'o') [] -> initiateAddDataConstructorBelowSelection
+        Vty.EvKey (Vty.KChar 'O') [] -> initiateAddDataConstructorAboveSelection
+        Vty.EvKey (Vty.KChar ' ') [] -> case selection of
+            TypeConstructorSelection -> continue appState
+            DataConstructorSelection index -> addParamToDataConstructor appState typeDefKey index
         Vty.EvKey (Vty.KChar 'u') [] -> undo
         Vty.EvKey (Vty.KChar 'r') [] -> redo
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
@@ -457,13 +466,21 @@ handleEventOnTypeDefView appState event (typeDefKey, selectedDataConstructorInde
         _ -> handleEditorEvent event editor >>= setEditState appState . flip AddingDataConstructor index
     _ -> continue appState
     where
-        navUp = setSelectedDataConstructor $ selectedDataConstructorIndex - 1
-        navDown = setSelectedDataConstructor $ selectedDataConstructorIndex + 1
-        setSelectedDataConstructor index = continue $
-            if dataConstructorCount == 0
-            then appState
-            else appState & locationHistory . present . _TypeDefView . _2 .~ mod index dataConstructorCount
+        navUp = setSelection $ case selection of
+            TypeConstructorSelection -> TypeConstructorSelection
+            DataConstructorSelection index -> if index > 0 then DataConstructorSelection $ index - 1 else TypeConstructorSelection
+        navDown = setSelection $ case selection of
+            TypeConstructorSelection -> if dataConstructorCount > 0 then DataConstructorSelection 0 else TypeConstructorSelection
+            DataConstructorSelection index -> DataConstructorSelection $ min (index + 1) (dataConstructorCount - 1)
+        setSelection newSelection = continue $ appState
+            & locationHistory . present . _TypeDefView . typeDefViewSelection .~ newSelection
         dataConstructorCount = getDataConstructorCount appState typeDefKey
+        initiateAddDataConstructorBelowSelection = initiateAddDataConstructor appState $ case selection of
+            TypeConstructorSelection -> 0
+            DataConstructorSelection index -> index + 1
+        initiateAddDataConstructorAboveSelection = initiateAddDataConstructor appState $ case selection of
+            TypeConstructorSelection -> 0
+            DataConstructorSelection index -> index
         undo = modifyTypeDefs appState $ ix typeDefKey %~ goBack
         redo = modifyTypeDefs appState $ ix typeDefKey %~ goForward
 
@@ -681,7 +698,7 @@ goToDef key = case key of
     ExprDefKey k -> goToExprDef k
 
 goToTypeDef :: TypeDefKey -> AppState -> EventM AppResourceName (Next AppState)
-goToTypeDef key = modifyLocationHistory $ push $ TypeDefView (key, 0)
+goToTypeDef key = modifyLocationHistory $ push $ TypeDefView $ TypeDefViewLocation key TypeConstructorSelection
 
 goToExprDef :: ExprDefKey -> AppState -> EventM AppResourceName (Next AppState)
 goToExprDef key = modifyLocationHistory $ push $ ExprDefView (key, [])
@@ -701,7 +718,7 @@ initiateRenameDefinition appState = continue $ appState & editState .~ Naming in
 
 getCurrentDefName :: AppState -> Maybe Name
 getCurrentDefName appState = case view present $ view locationHistory appState of
-    TypeDefView (defKey, _) -> join $ preview (typeDefs . ix defKey . present . T.typeConstructor . T.name) appState
+    TypeDefView loc -> join $ preview (typeDefs . ix (view typeDefKey loc) . present . T.typeConstructor . T.name) appState
     ExprDefView (defKey, _) -> join $ preview (exprDefs . ix defKey . present . name) appState
     _ -> Nothing
 
@@ -717,7 +734,7 @@ commitDefName appState newName isValid = case newName of
 setCurrentDefName :: Maybe Name -> AppState -> EventM AppResourceName (Next AppState)
 setCurrentDefName newName appState = case view present $ view locationHistory appState of
     DefListView _ -> error "setCurrentDefName is not implemented for DefListView"
-    TypeDefView (defKey, _) -> modifyTypeDef defKey (T.typeConstructor . T.name .~ newName) appState
+    TypeDefView loc -> modifyTypeDef (view typeDefKey loc) (T.typeConstructor . T.name .~ newName) appState
     ExprDefView (defKey, _) -> modifyExprDef defKey (name .~ newName) appState
 
 initiateAddDataConstructor :: AppState -> AtIndex -> EventM AppResourceName (Next AppState)
@@ -729,7 +746,7 @@ commitAddDataConstructor appState typeDefKey index name =
     if isValidDataConstructorName name
     then appState
         & editState .~ NotEditing
-        & locationHistory . present . _TypeDefView . _2 .~ index
+        & locationHistory . present . _TypeDefView . typeDefViewSelection .~ DataConstructorSelection index
         & modifyTypeDef typeDefKey (T.dataConstructors %~ insertAt index (T.DataConstructor name []))
     else continue appState
 
