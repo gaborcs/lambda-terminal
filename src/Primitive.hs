@@ -28,7 +28,7 @@ getValue p = case p of
     Times -> binaryIntOpValue $ \a b -> V.Int (a * b)
 
 binaryIntOpType :: T.Type t -> T.Type t
-binaryIntOpType resultType = T.Fn T.Int $ T.Fn T.Int resultType
+binaryIntOpType resultType = T.fn T.Int $ T.fn T.Int resultType
 
 binaryIntOpValue :: (Int -> Int -> V.Value t) -> V.Value t
 binaryIntOpValue f = V.Fn $ \maybeAVal -> Just $ V.Fn $ \maybeBVal -> case (maybeAVal, maybeBVal) of

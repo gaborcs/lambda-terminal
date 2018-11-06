@@ -13,9 +13,9 @@ type VarId = Int
 data Type typeDefKey
     = Wildcard
     | Var VarId
-    | Fn (Type typeDefKey) (Type typeDefKey)
     | Call (Type typeDefKey) (Type typeDefKey)
     | Constructor typeDefKey
+    | Fn
     | Int
     deriving (Eq, Read, Show, Functor)
 
@@ -45,8 +45,11 @@ makeLenses ''TypeConstructor
 makeLenses ''DataConstructor
 makeLenses ''DataConstructorKey
 
+fn :: Type t -> Type t -> Type t
+fn = Call . Call Fn
+
 getDataConstructorType :: (t -> TypeDef t) -> DataConstructorKey t -> Maybe (Type t)
-getDataConstructorType getTypeDef (DataConstructorKey typeDefKey constructorName) = foldr Fn resultType <$> maybeParamTypes where
+getDataConstructorType getTypeDef (DataConstructorKey typeDefKey constructorName) = foldr fn resultType <$> maybeParamTypes where
     TypeDef typeConstructor dataConstructors = getTypeDef typeDefKey
     resultType = foldl Call (Constructor typeDefKey) typeVars
     typeVars = Var <$> [0 .. length (view typeConstructorParams typeConstructor) - 1]
