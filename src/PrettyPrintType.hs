@@ -10,8 +10,8 @@ prettyPrintType getTypeName typeVarNames t = case t of
     T.Wildcard -> "_"
     T.Var varId -> typeVarNames !! varId
     T.Fn paramType resultType -> inParensIf (is T._Fn paramType) (print paramType) ++ " -> " ++ print resultType
-    T.Constructor typeDefKey children -> unwords $ getTypeName typeDefKey : fmap printChild children where
-        printChild child = inParensIf (isMultiWord child) (print child)
+    T.Call callee arg -> print callee ++ " " ++ inParensIf (isMultiWord arg) (print arg)
+    T.Constructor typeDefKey -> getTypeName typeDefKey
     T.Int -> "Int"
     where print = prettyPrintType getTypeName typeVarNames
 
@@ -23,5 +23,6 @@ isMultiWord t = case t of
     T.Wildcard -> False
     T.Var _ -> False
     T.Fn _ _ -> True
-    T.Constructor _ types -> not $ null types
+    T.Call _ _ -> True
+    T.Constructor _ -> False
     T.Int -> False

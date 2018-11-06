@@ -171,13 +171,12 @@ unify t1 t2 = case (t1, t2) of
     (_, T.Wildcard) -> Just Map.empty
     (T.Var v, t) -> either (const Nothing) Just $ bind v t
     (t, T.Var v) -> either (const Nothing) Just $ bind v t
-    (T.Fn a1 b1, T.Fn a2 b2) -> do
+    (T.Fn a1 b1, T.Fn a2 b2) -> unify (T.Call a1 b1) (T.Call a2 b2)
+    (T.Call a1 b1, T.Call a2 b2) -> do
         s1 <- unify a1 a2
         s2 <- unify (apply s1 b1) (apply s1 b2)
         return $ compose s2 s1
-    (T.Constructor tDef1 ts1, T.Constructor tDef2 ts2) -> if tDef1 == tDef2 then maybeSubst else Nothing where
-        maybeSubst = foldl compose Map.empty <$> maybeSubsts
-        maybeSubsts = zipWithM unify ts1 ts2
+    (T.Constructor tDef1, T.Constructor tDef2) -> if tDef1 == tDef2 then Just Map.empty else Nothing
     (T.Int, T.Int) -> Just Map.empty
     _ -> Nothing
 
@@ -190,16 +189,18 @@ typeVars :: T.Type t -> [T.VarId]
 typeVars t = case t of
     T.Wildcard -> []
     T.Var var -> [var]
-    T.Fn t1 t2 -> typeVars t1 `List.union` typeVars t2
-    T.Constructor _ ts -> foldl List.union [] $ typeVars <$> ts
+    T.Fn a b -> typeVars a `List.union` typeVars b
+    T.Call a b -> typeVars a `List.union` typeVars b
+    T.Constructor _ -> []
     T.Int -> []
 
 apply :: Substitution t -> T.Type t -> T.Type t
 apply subst t = case t of
     T.Wildcard -> T.Wildcard
     T.Var var -> Map.findWithDefault t var subst
-    T.Fn t1 t2 -> T.Fn (apply subst t1) (apply subst t2)
-    T.Constructor name ts -> T.Constructor name $ apply subst <$> ts
+    T.Fn a b -> T.Fn (apply subst a) (apply subst b)
+    T.Call a b -> T.Call (apply subst a) (apply subst b)
+    T.Constructor name -> T.Constructor name
     T.Int -> T.Int
 
 applyToInferResult :: Substitution t -> InferResult t -> InferResult t

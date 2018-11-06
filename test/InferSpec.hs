@@ -17,10 +17,10 @@ data TestDataConstructorKey = FalseC | TrueC | NothingC | JustC deriving (Eq, Sh
 
 getConstructorType :: TestDataConstructorKey -> Maybe (T.Type TestType)
 getConstructorType key = Just $ case key of
-    FalseC -> T.Constructor BoolT []
-    TrueC -> T.Constructor BoolT []
-    NothingC -> T.Constructor MaybeT [T.Var 0]
-    JustC -> T.Fn (T.Var 0) (T.Constructor MaybeT [T.Var 0])
+    FalseC -> T.Constructor BoolT
+    TrueC -> T.Constructor BoolT
+    NothingC -> T.Call (T.Constructor MaybeT) (T.Var 0)
+    JustC -> T.Fn (T.Var 0) (T.Call (T.Constructor MaybeT) (T.Var 0))
 
 spec :: Spec
 spec = do
@@ -43,10 +43,10 @@ spec = do
         E.Primitive Plus `hasType` T.Fn T.Int (T.Fn T.Int T.Int)
         E.Def "inc" `hasType` T.Fn T.Int T.Int
         E.Call (E.Def "inc") (E.Int 1) `hasType` T.Int
-        E.Constructor NothingC `hasType` T.Constructor MaybeT [T.Var 0]
-        E.Constructor JustC `hasType` T.Fn (T.Var 0) (T.Constructor MaybeT [T.Var 0])
-        E.Call (E.Constructor JustC) (E.Int 1) `hasType` T.Constructor MaybeT [T.Int]
-        E.Def "intToBool" `hasType` T.Fn T.Int (T.Constructor BoolT [])
+        E.Constructor NothingC `hasType` T.Call (T.Constructor MaybeT) (T.Var 0)
+        E.Constructor JustC `hasType` T.Fn (T.Var 0) (T.Call (T.Constructor MaybeT) (T.Var 0))
+        E.Call (E.Constructor JustC) (E.Int 1) `hasType` T.Call (T.Constructor MaybeT) T.Int
+        E.Def "intToBool" `hasType` T.Fn T.Int (T.Constructor BoolT)
     it "indicates where type errors happen" $ do
         E.Call (E.Int 1) (E.Int 1) `failsAtPath` []
         E.fn "x" (E.Call (E.Int 1) (E.Int 1)) `failsAtPath` [1]
