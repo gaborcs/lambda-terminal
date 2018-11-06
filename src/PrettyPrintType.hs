@@ -1,5 +1,6 @@
 module PrettyPrintType where
 
+import Control.Lens.Extras
 import Control.Monad
 import Util
 import qualified Type as T
@@ -18,10 +19,4 @@ defaultTypeVarNames :: [String]
 defaultTypeVarNames = [1..] >>= flip replicateM ['a'..'z']
 
 isMultiWord :: T.Type t -> Bool
-isMultiWord t = case t of
-    T.Wildcard -> False
-    T.Var _ -> False
-    T.Call _ _ -> True
-    T.Constructor _ -> False
-    T.Fn -> False
-    T.Int -> False
+isMultiWord = is T._Call
