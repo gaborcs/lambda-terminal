@@ -935,7 +935,7 @@ createInferResult getTypeDef defs defKey = Infer.inferType (T.getDataConstructor
 getTypeDef :: Map.Map TypeDefKey (History TypeDef) -> TypeDefKey -> TypeDef
 getTypeDef typeDefs key = typeDefs Map.! key ^. present
 
-createEvalResult :: Map.Map TypeDefKey Expr -> ExprDefViewLocation -> IO EvalResult
+createEvalResult :: Map.Map ExprDefKey Expr -> ExprDefViewLocation -> IO EvalResult
 createEvalResult defs (ExprDefViewLocation defKey selectionPath) = do
     let maybeDef = Map.lookup defKey defs
     let maybeSelected = maybeDef >>= getItemAtPathInExpr selectionPath
