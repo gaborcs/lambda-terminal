@@ -62,7 +62,7 @@ data EditState
     | AddingTypeConstructorParam AtIndex EditorState
     | AddingDataConstructor AtIndex EditorState
     | SelectionRenaming EditorState
-    | SelectionEditing EditorState (Maybe AutocompleteState)
+    | EditingExpr Expr Path EditorState (Maybe AutocompleteState)
 data DerivedState = DerivedState
     { _inferResult :: InferResult
     , _evalResult :: EvalResult
@@ -181,7 +181,7 @@ app = App
     , appAttrMap = const $ attrMap Vty.defAttr [] }
 
 draw :: AppState -> [AppWidget]
-draw appState = case view present $ view locationHistory appState of
+draw appState = case getLocation appState of
     DefListView maybeSelectedDefKey -> drawDefListView appState maybeSelectedDefKey
     TypeDefView location -> drawTypeDefView appState location
     ExprDefView location -> drawExprDefView appState location
@@ -236,7 +236,7 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ rendered
     renderDataConstructor (T.DataConstructor name paramTypes) = str $ unwords $ name : printedParamTypes where
         printedParamTypes = printParamType <$> paramTypes
         printParamType t = inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) (view T.typeConstructorParams typeConstructor) t)
-    T.TypeDef typeConstructor dataConstructors = getTypeDef (view typeDefs appState) typeDefKey
+    T.TypeDef typeConstructor dataConstructors = getPresentTypeDef (view typeDefs appState) typeDefKey
 
 insertAt :: Int -> a -> [a] -> [a]
 insertAt index item = (!! index) . iterate _tail %~ (item :)
@@ -247,9 +247,9 @@ renderExpandingSingleLineEditor editor = hLimit (textWidth editStr + 1) $ render
 
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
 drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
-    AppState _ defs _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult)) = appState
+    AppState _ _ _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult)) = appState
     ui = case editState of
-        SelectionEditing _ (Just (AutocompleteState autocompleteList editorExtent)) | autocompleteListLength > 0 ->
+        EditingExpr _ _ _ (Just (AutocompleteState autocompleteList editorExtent)) | autocompleteListLength > 0 ->
             [ translateBy autocompleteOffset autocomplete, layout ] where
             autocompleteOffset = Brick.Types.Location (editorX, editorY + 1)
             Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
@@ -261,10 +261,10 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     renderedTitle = case editState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ str $ getExprName appState defKey
-    defHistory = defs Map.! defKey
     coloredExpr = modifyDefAttr (`Vty.withForeColor` gray) renderedExpr -- unselected parts of the expression are gray
-    def = view present defHistory
-    (_, renderedExpr) = renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError (renderExpr appState $ view expr def)
+    def = getExprDefs appState Map.! defKey
+    renderedExpr = snd $ renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError renderer
+    renderer = renderExpr appState $ view expr def
     maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
@@ -289,7 +289,7 @@ renderAutocompleteItem isSelected text = color $ padRight Max $ str text where
 
 renderWithAttrs :: WrappingStyle -> EditState -> Selection -> Maybe TypeError -> Renderer -> RenderResult
 renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case editState of
-    SelectionEditing editor _ | selected -> renderSelectionEditor editor
+    EditingExpr _ _ editor _ | selected -> renderSelectionEditor editor
     SelectionRenaming editor | selected -> renderSelectionEditor editor
     _ -> (renderResultType, (if selected then visible . highlight else id) $ makeRedIfNeeded widget)
     where
@@ -564,10 +564,10 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         _ -> do
             newEditor <- handleEditorEvent event editor
             setEditState appState $ SelectionRenaming newEditor
-    SelectionEditing editor maybeAutocompleteState -> case event of
+    EditingExpr editedExpr path editor maybeAutocompleteState -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
-        Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) commitAutocompleteSelection maybeAutocompleteState
-        Vty.EvKey Vty.KEnter [] -> commitEditorContent editorContent
+        Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) (commitAutocompleteSelection editedExpr path) maybeAutocompleteState
+        Vty.EvKey Vty.KEnter [] -> commitEditorContent editedExpr path editorContent
         _ -> do
             newEditor <- case event of
                 -- ignore up/down as they are used to control the autocomplete
@@ -590,19 +590,19 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                             constructorKeys = typeDefKeys >>= getConstructorKeys
                             getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
                             getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
-                            getConstructors = view T.dataConstructors . getTypeDef currentCustomTypeDefs
+                            getConstructors = view T.dataConstructors . getPresentTypeDef currentCustomTypeDefs
                         Pattern _ -> map Pattern constructorPatterns where
                             constructorPatterns = do
                                 typeDefKey <- typeDefKeys
                                 T.DataConstructor constructorName paramTypes <-
-                                    view T.dataConstructors $ getTypeDef currentCustomTypeDefs typeDefKey
+                                    view T.dataConstructors $ getPresentTypeDef currentCustomTypeDefs typeDefKey
                                 let constructorKey = T.DataConstructorKey typeDefKey constructorName
                                 let arity = length paramTypes
                                 let wildcards = replicate arity P.Wildcard
                                 return $ P.Constructor constructorKey wildcards
                     typeDefKeys = getTypeDefKeys appState
             maybeEditorExtent <- lookupExtent EditorName
-            setEditState appState $ SelectionEditing newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
+            setEditState appState $ EditingExpr editedExpr path newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
         where editorContent = head $ getEditContents editor
     NotEditing -> case event of
         Vty.EvKey Vty.KEnter [] -> goToDefinition
@@ -667,30 +667,41 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
             Pattern (P.Var name) -> setEditState appState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
             Expr (E.Var name) -> setEditState appState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
             _ -> continue appState
-        initiateSelectionEdit = setEditState appState $ SelectionEditing initialSelectionEditor Nothing
+        initiateSelectionEdit = setEditState appState $ EditingExpr (view expr def) selectionPath initialSelectionEditor Nothing
         initialSelectionEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialSelectionEditorContent
         initialSelectionEditorContent = printAutocompleteItem getCurrentExprName selected
         commitSelectionRename editorContent = case selected of
             Pattern (P.Var name) | isValidVarName editorContent -> setExpr $ E.renameVar name editorContent (view expr def)
             Expr (E.Var name) | isValidVarName editorContent -> setExpr $ E.renameVar name editorContent (view expr def)
             _ -> continue appState
-        commitEditorContent editorContent = case readMaybe editorContent of
-            Just int -> setExpr $ replaceSelected (E.Int int) (P.Int int)
-            _ | isValidVarName editorContent -> setExpr $ replaceSelected (E.Var editorContent) (P.Var editorContent)
+        commitEditorContent editedExpr path editorContent = case readMaybe editorContent of
+            Just int -> commitEdit path $ modifyAtPathInExpr path (const $ E.Int int) (const $ P.Int int) editedExpr
+            _ | isValidVarName editorContent ->
+                commitEdit path $ modifyAtPathInExpr path (const $ E.Var editorContent) (const $ P.Var editorContent) editedExpr
             _ -> continue appState
-        commitAutocompleteSelection (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
-            Just (_, selectedItem) -> setExpr $ case selectedItem of
-                Expr expr -> modifySelected (const expr) id
-                Pattern patt -> modifySelected id (const patt)
+        commitAutocompleteSelection editedExpr path (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
+            Just (_, selectedItem) -> commitEdit path $ case selectedItem of
+                Expr expr -> modifyAtPathInExpr path (const expr) id editedExpr
+                Pattern patt -> modifyAtPathInExpr path id (const patt) editedExpr
             _ -> continue appState
+        commitEdit newSelectionPath newExpr = appState
+            & editState .~ NotEditing
+            & locationHistory . present . _ExprDefView . exprDefViewSelection .~ newSelectionPath
+            & modifyExprDef defKey (expr .~ newExpr)
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern (view expr def)
-        callSelected = modifyExprContainingSelection (`E.Call` E.Hole) [1]
-        applyFnToSelected = modifyExprContainingSelection (E.Hole `E.Call`) [0]
-        wrapSelectedInFn = modifyExprContainingSelection (\expr -> E.Fn $ pure (P.Wildcard, expr)) [0]
+        callSelected = editExprContainingSelection (`E.Call` E.Hole) [1]
+        applyFnToSelected = editExprContainingSelection (E.Hole `E.Call`) [0]
+        wrapSelectedInFn = editExprContainingSelection (\expr -> E.Fn $ pure (P.Wildcard, expr)) [0]
+        editExprContainingSelection modify pathToBeEdited = liftIO (updateDerivedState newAppState) >>= continue where
+            newAppState = appState & editState .~ newEditState
+            newEditState = EditingExpr editedExpr editedPath emptyEditor Nothing
+            editedExpr = modifyAtPathInExpr pathToExprContainingSelection modify id (view expr def)
+            editedPath = pathToExprContainingSelection ++ pathToBeEdited
+        pathToExprContainingSelection = dropPatternPartOfPath (view expr def) selectionPath
+        emptyEditor = editor EditorName (Just 1) ""
         addAlternativeToSelected = maybe (continue appState) addAlternative (getContainingFunction selectionPath $ view expr def)
         addAlternative (fnPath, alts) = modifyExprAtPath fnPath (const $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)) [2 * length alts]
-        modifyExprContainingSelection = modifyExprAtPath $ dropPatternPartOfPath (view expr def) selectionPath
         modifyExprAtPath path modify selectionPathInModifiedExpr = appState
             & locationHistory . present . _ExprDefView . exprDefViewSelection .~ path ++ selectionPathInModifiedExpr
             & modifyExprDef defKey (expr %~ modifyAtPathInExpr path modify id)
@@ -912,18 +923,33 @@ handleExprDefsChange appState = do
 
 updateDerivedState :: AppState -> IO AppState
 updateDerivedState appState = do
-    let getCurrentTypeDef = getTypeDef $ view typeDefs appState
-    let presentExprs = view (present . expr) <$> view exprDefs appState
-    let location = view present $ view locationHistory appState
-    newDerivedState <- traverse (createDerivedState getCurrentTypeDef presentExprs) (preview _ExprDefView location)
-    return $ appState & derivedState .~ newDerivedState
+    let getTypeDef = getPresentTypeDef $ view typeDefs appState
+    let exprs = getExprs appState
+    let location = getLocation appState
+    maybeDerivedState <- traverse (createDerivedState getTypeDef exprs) (preview _ExprDefView location)
+    return $ appState & derivedState .~ maybeDerivedState
 
 updateEvalResult :: AppState -> IO AppState
 updateEvalResult appState = do
-    let exprs = view (present . expr) <$> view exprDefs appState
-    let location = view present $ view locationHistory appState
-    newEvalResult <- traverse (createEvalResult exprs) (preview _ExprDefView location)
-    return $ appState & derivedState . _Just . evalResult %~ flip fromMaybe newEvalResult
+    let exprs = getExprs appState
+    let location = getLocation appState
+    maybeEvalResult <- traverse (createEvalResult exprs) (preview _ExprDefView location)
+    return $ appState & derivedState . _Just . evalResult %~ flip fromMaybe maybeEvalResult
+
+getExprs :: AppState -> Map.Map ExprDefKey Expr
+getExprs appState = view expr <$> getExprDefs appState
+
+getExprDefs :: AppState -> Map.Map ExprDefKey ExprDef
+getExprDefs appState = case (appState ^. editState, appState ^. locationHistory . present) of
+    (EditingExpr e _ _ _, ExprDefView loc) -> presentDefs & ix (view exprDefKey loc) %~ expr .~ e
+    _ -> presentDefs
+    where presentDefs = view present <$> appState ^. exprDefs
+
+getLocation :: AppState -> Location
+getLocation appState = case appState ^. editState of
+    EditingExpr _ path _ _ -> committedLocation & _ExprDefView . exprDefViewSelection .~ path
+    _ -> committedLocation
+    where committedLocation = appState ^. locationHistory . present
 
 createDerivedState :: (TypeDefKey -> TypeDef) -> Map.Map ExprDefKey Expr -> ExprDefViewLocation -> IO DerivedState
 createDerivedState getTypeDef defs location =
@@ -932,15 +958,15 @@ createDerivedState getTypeDef defs location =
 createInferResult :: (TypeDefKey -> TypeDef) -> Map.Map ExprDefKey Expr -> ExprDefKey -> InferResult
 createInferResult getTypeDef defs defKey = Infer.inferType (T.getDataConstructorType getTypeDef) defs $ defs Map.! defKey
 
-getTypeDef :: Map.Map TypeDefKey (History TypeDef) -> TypeDefKey -> TypeDef
-getTypeDef typeDefs key = typeDefs Map.! key ^. present
+getPresentTypeDef :: Map.Map TypeDefKey (History TypeDef) -> TypeDefKey -> TypeDef
+getPresentTypeDef typeDefs key = typeDefs Map.! key ^. present
 
 createEvalResult :: Map.Map ExprDefKey Expr -> ExprDefViewLocation -> IO EvalResult
-createEvalResult defs (ExprDefViewLocation defKey selectionPath) = do
-    let maybeDef = Map.lookup defKey defs
-    let maybeSelected = maybeDef >>= getItemAtPathInExpr selectionPath
+createEvalResult exprs (ExprDefViewLocation defKey selectionPath) = do
+    let maybeExpr = Map.lookup defKey exprs
+    let maybeSelected = maybeExpr >>= getItemAtPathInExpr selectionPath
     let maybeSelectedExpr = maybeSelected >>= preview _Expr
-    let maybeSelectionValue = maybeSelectedExpr >>= eval defs
+    let maybeSelectionValue = maybeSelectedExpr >>= eval exprs
     timeoutResult <- timeout 10000 $ evaluate $ force maybeSelectionValue
     return $ case timeoutResult of
         Just (Just v) -> Value v
