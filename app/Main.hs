@@ -416,7 +416,7 @@ getChildInPattern patt index = case patt of
 
 handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
 handleEvent appState brickEvent = case brickEvent of
-    VtyEvent event -> case view present $ view locationHistory appState of
+    VtyEvent event -> case getLocation appState of
         DefListView maybeSelectedDefKey -> handleEventOnDefListView appState event maybeSelectedDefKey
         TypeDefView location -> handleEventOnTypeDefView appState event location
         ExprDefView location -> handleEventOnExprDefView appState event location
@@ -635,11 +635,10 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
     _ -> error "invalid state"
     where
         currentCustomTypeDefs = view typeDefs appState
-        currentExprDefs = view exprDefs appState
+        currentExprDefs = getExprDefs appState
         exprDefKeys = Map.keys currentExprDefs
         getCurrentExprName = getExprName appState
-        defHistory = currentExprDefs Map.! defKey
-        def = view present defHistory
+        def = currentExprDefs Map.! defKey
         currentClipboard = view clipboard appState
         currentEditState = view editState appState
         navToParent = nav parentPath
@@ -740,7 +739,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
             createAppState = handleExprDefsChange $ appState
                 & exprDefs . ix defKey .~ newDefHistory
                 & locationHistory . present . _ExprDefView . exprDefViewSelection %~ modifySelectionPath
-            newDefHistory = modify defHistory
+            newDefHistory = modify $ view exprDefs appState Map.! defKey
             modifySelectionPath = maybe id const $ getDiffPathBetweenExprs (view expr def) $ view (present . expr) newDefHistory
 
 isValidTypeName :: Name -> Bool
