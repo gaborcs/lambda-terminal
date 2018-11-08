@@ -62,7 +62,8 @@ data EditState
     | AddingTypeConstructorParam AtIndex EditorState
     | AddingDataConstructor AtIndex EditorState
     | SelectionRenaming EditorState
-    | EditingExpr Expr Path EditorState (Maybe AutocompleteState)
+    | EditingExpr Expr PathsToBeEdited EditorState (Maybe AutocompleteState)
+type PathsToBeEdited = NonEmpty.NonEmpty Path -- the first is the currently edited one
 data DerivedState = DerivedState
     { _inferResult :: InferResult
     , _evalResult :: EvalResult
@@ -564,10 +565,10 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         _ -> do
             newEditor <- handleEditorEvent event editor
             setEditState appState $ SelectionRenaming newEditor
-    EditingExpr editedExpr path editor maybeAutocompleteState -> case event of
+    EditingExpr editedExpr pathsToBeEdited editor maybeAutocompleteState -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
-        Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) (commitAutocompleteSelection editedExpr path) maybeAutocompleteState
-        Vty.EvKey Vty.KEnter [] -> commitEditorContent editedExpr path editorContent
+        Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) (commitAutocompleteSelection editedExpr pathsToBeEdited) maybeAutocompleteState
+        Vty.EvKey Vty.KEnter [] -> commitEditorContent editedExpr pathsToBeEdited editorContent
         _ -> do
             newEditor <- case event of
                 -- ignore up/down as they are used to control the autocomplete
@@ -602,7 +603,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                                 return $ P.Constructor constructorKey wildcards
                     typeDefKeys = getTypeDefKeys appState
             maybeEditorExtent <- lookupExtent EditorName
-            setEditState appState $ EditingExpr editedExpr path newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
+            setEditState appState $ EditingExpr editedExpr pathsToBeEdited newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
         where editorContent = head $ getEditContents editor
     NotEditing -> case event of
         Vty.EvKey Vty.KEnter [] -> goToDefinition
@@ -666,25 +667,32 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
             Pattern (P.Var name) -> setEditState appState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
             Expr (E.Var name) -> setEditState appState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
             _ -> continue appState
-        initiateSelectionEdit = setEditState appState $ EditingExpr (view expr def) selectionPath initialSelectionEditor Nothing
+        initiateSelectionEdit = setEditState appState $ EditingExpr (view expr def) (pure selectionPath) initialSelectionEditor Nothing
         initialSelectionEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialSelectionEditorContent
         initialSelectionEditorContent = printAutocompleteItem getCurrentExprName selected
         commitSelectionRename editorContent = case selected of
             Pattern (P.Var name) | isValidVarName editorContent -> setExpr $ E.renameVar name editorContent (view expr def)
             Expr (E.Var name) | isValidVarName editorContent -> setExpr $ E.renameVar name editorContent (view expr def)
             _ -> continue appState
-        commitEditorContent editedExpr path editorContent = case readMaybe editorContent of
-            Just int -> commitEdit path $ modifyAtPathInExpr path (const $ E.Int int) (const $ P.Int int) editedExpr
-            _ | isValidVarName editorContent ->
-                commitEdit path $ modifyAtPathInExpr path (const $ E.Var editorContent) (const $ P.Var editorContent) editedExpr
+        commitEditorContent editedExpr (path NonEmpty.:| furtherPathsToBeEdited) editorContent = case readMaybe editorContent of
+            Just int -> commitEdit path furtherPathsToBeEdited newExpr where
+                newExpr = modifyAtPathInExpr path (const $ E.Int int) (const $ P.Int int) editedExpr
+            _ | isValidVarName editorContent -> commitEdit path furtherPathsToBeEdited newExpr where
+                newExpr = modifyAtPathInExpr path (const $ E.Var editorContent) (const $ P.Var editorContent) editedExpr
             _ -> continue appState
-        commitAutocompleteSelection editedExpr path (AutocompleteState autocompleteList _) = case ListWidget.listSelectedElement autocompleteList of
-            Just (_, selectedItem) -> commitEdit path $ case selectedItem of
-                Expr expr -> modifyAtPathInExpr path (const expr) id editedExpr
-                Pattern patt -> modifyAtPathInExpr path id (const patt) editedExpr
-            _ -> continue appState
-        commitEdit newSelectionPath newExpr = appState
-            & editState .~ NotEditing
+        commitAutocompleteSelection editedExpr (path NonEmpty.:| furtherPathsToBeEdited) (AutocompleteState autocompleteList _) =
+            case ListWidget.listSelectedElement autocompleteList of
+                Just (_, selectedItem) -> case selectedItem of
+                    Expr expr -> commitEdit path furtherPathsToBeEdited newExpr where
+                        newExpr = modifyAtPathInExpr path (const expr) id editedExpr
+                    Pattern patt -> commitEdit path (newPathsToBeEdited ++ furtherPathsToBeEdited) newExpr where
+                        newPathsToBeEdited = (path ++) <$> getWildcardPaths patt
+                        newExpr = modifyAtPathInExpr path id (const patt) editedExpr
+                _ -> continue appState
+        commitEdit newSelectionPath furtherPathsToBeEdited newExpr = appState
+            & editState .~ case NonEmpty.nonEmpty furtherPathsToBeEdited of
+                Just paths -> EditingExpr newExpr paths emptyEditor Nothing
+                Nothing -> NotEditing
             & committedLocations . present . _ExprDefView . exprDefViewSelection .~ newSelectionPath
             & modifyExprDef defKey (expr .~ newExpr)
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
@@ -694,7 +702,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         wrapSelectedInFn = editExprContainingSelection (\expr -> E.Fn $ pure (P.Wildcard, expr)) [0]
         editExprContainingSelection modify pathToBeEdited = liftIO (updateDerivedState newAppState) >>= continue where
             newAppState = appState & editState .~ newEditState
-            newEditState = EditingExpr editedExpr editedPath emptyEditor Nothing
+            newEditState = EditingExpr editedExpr (pure editedPath) emptyEditor Nothing
             editedExpr = modifyAtPathInExpr pathToExprContainingSelection modify id (view expr def)
             editedPath = pathToExprContainingSelection ++ pathToBeEdited
         pathToExprContainingSelection = dropPatternPartOfPath (view expr def) selectionPath
@@ -741,6 +749,12 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 & committedLocations . present . _ExprDefView . exprDefViewSelection %~ modifySelectionPath
             newDefHistory = modify $ view committedExprDefs appState Map.! defKey
             modifySelectionPath = maybe id const $ getDiffPathBetweenExprs (view expr def) $ view (present . expr) newDefHistory
+
+getWildcardPaths :: Pattern -> [Path]
+getWildcardPaths patt = case patt of
+    P.Wildcard -> [[]]
+    P.Constructor _ children -> join $ zipWith (fmap . (:)) [0..] $ getWildcardPaths <$> children
+    _ -> []
 
 isValidTypeName :: Name -> Bool
 isValidTypeName name = case name of
@@ -946,7 +960,7 @@ getExprDefs appState = case (appState ^. editState, getLocation appState) of
 
 getLocation :: AppState -> Location
 getLocation appState = case appState ^. editState of
-    EditingExpr _ path _ _ -> committedLocation & _ExprDefView . exprDefViewSelection .~ path
+    EditingExpr _ path _ _ -> committedLocation & _ExprDefView . exprDefViewSelection .~ NonEmpty.head path
     _ -> committedLocation
     where committedLocation = appState ^. committedLocations . present
 
