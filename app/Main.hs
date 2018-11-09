@@ -697,18 +697,29 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
             & modifyExprDef defKey (expr .~ newExpr)
         replaceSelected replacementIfExpr replacementIfPattern = modifySelected (const replacementIfExpr) (const replacementIfPattern)
         modifySelected modifyExpr modifyPattern = modifyAtPathInExpr selectionPath modifyExpr modifyPattern (view expr def)
-        callSelected = editExprContainingSelection (`E.Call` E.Hole) [1]
-        applyFnToSelected = editExprContainingSelection (E.Hole `E.Call`) [0]
-        wrapSelectedInFn = editExprContainingSelection (\expr -> E.Fn $ pure (P.Wildcard, expr)) [0]
-        editExprContainingSelection modify pathToBeEdited = liftIO (updateDerivedState newAppState) >>= continue where
-            newAppState = appState & editState .~ newEditState
-            newEditState = EditingExpr editedExpr (pure editedPath) emptyEditor Nothing
-            editedExpr = modifyAtPathInExpr pathToExprContainingSelection modify id (view expr def)
-            editedPath = pathToExprContainingSelection ++ pathToBeEdited
+        callSelected = editExprContainingSelection (`E.Call` E.Hole) (pure [1])
+        applyFnToSelected = editExprContainingSelection (E.Hole `E.Call`) (pure [0])
+        wrapSelectedInFn = editExprContainingSelection (\expr -> E.Fn $ pure (P.Wildcard, expr)) pathsToBeEdited where
+            pathsToBeEdited = if isWrappingHole then pathToWildcard NonEmpty.:| [pathToHole] else pure pathToWildcard
+            isWrappingHole = getItemAtPathInExpr pathToExprContainingSelection (view expr def) == Just (Expr E.Hole)
+            pathToWildcard = [0]
+            pathToHole = [1]
+        editExprContainingSelection = editExpr pathToExprContainingSelection
+        editExpr modificationPath modify pathsToBeEditedFromModificationPath =
+            liftIO (updateDerivedState newAppState) >>= continue where
+                newAppState = appState & editState .~ newEditState
+                newEditState = EditingExpr editedExpr pathsToBeEdited emptyEditor Nothing
+                editedExpr = modifyAtPathInExpr modificationPath modify id (view expr def)
+                pathsToBeEdited = (modificationPath ++) <$> pathsToBeEditedFromModificationPath
         pathToExprContainingSelection = dropPatternPartOfPath (view expr def) selectionPath
         emptyEditor = editor EditorName (Just 1) ""
         addAlternativeToSelected = maybe (continue appState) addAlternative (getContainingFunction selectionPath $ view expr def)
-        addAlternative (fnPath, alts) = modifyExprAtPath fnPath (const $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)) [2 * length alts]
+        addAlternative (fnPath, alts) = editExpr fnPath modify pathsToBeEditedFromFnPath where
+            modify = const $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)
+            pathsToBeEditedFromFnPath = pathToWildcard NonEmpty.:| [pathToHole]
+            pathToWildcard = [2 * newAltIndex]
+            pathToHole = [2 * newAltIndex + 1]
+            newAltIndex = length alts
         modifyExprAtPath path modify selectionPathInModifiedExpr = appState
             & committedLocations . present . _ExprDefView . exprDefViewSelection .~ path ++ selectionPathInModifiedExpr
             & modifyExprDef defKey (expr %~ modifyAtPathInExpr path modify id)
