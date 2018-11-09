@@ -677,6 +677,8 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         commitEditorContent editedExpr (path NonEmpty.:| furtherPathsToBeEdited) editorContent = case readMaybe editorContent of
             Just int -> commitEdit path furtherPathsToBeEdited newExpr where
                 newExpr = modifyAtPathInExpr path (const $ E.Int int) (const $ P.Int int) editedExpr
+            _ | editorContent == "" || editorContent == "_" -> commitEdit path furtherPathsToBeEdited newExpr where
+                newExpr = replaceSelected E.Hole P.Wildcard
             _ | isValidVarName editorContent -> commitEdit path furtherPathsToBeEdited newExpr where
                 newExpr = modifyAtPathInExpr path (const $ E.Var editorContent) (const $ P.Var editorContent) editedExpr
             _ -> continue appState
