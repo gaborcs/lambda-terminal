@@ -576,34 +576,38 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 Vty.EvKey Vty.KDown [] -> pure editor
                 _ -> handleEditorEvent event editor
             let newEditorContent = head $ getEditContents newEditor
-            let editorContentChanged = newEditorContent /= editorContent
-            let isSimilarToEditorContent str = map toLower newEditorContent `isInfixOf` map toLower str
-            let isMatch = isSimilarToEditorContent . printAutocompleteItem getCurrentExprName
-            newAutocompleteList <- case maybeAutocompleteState of
-                Just (AutocompleteState autocompleteList _) | not editorContentChanged -> ListWidget.handleListEvent event autocompleteList
-                _ -> pure $ ListWidget.list AutocompleteName items 1 where
-                    items = Vec.fromList $ filter isMatch $ case selected of
-                        Expr _ -> map Expr $ vars ++ primitives ++ defs ++ constructors where
-                            vars = E.Var <$> getVarsAtPath selectionPath (view expr def)
-                            primitives = E.Primitive <$> [minBound..]
-                            defs = E.Def <$> exprDefKeys
-                            constructors = E.Constructor <$> constructorKeys
-                            constructorKeys = typeDefKeys >>= getConstructorKeys
-                            getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
-                            getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
-                            getConstructors = view T.dataConstructors . getPresentTypeDef currentCustomTypeDefs
-                        Pattern _ -> map Pattern constructorPatterns where
-                            constructorPatterns = do
-                                typeDefKey <- typeDefKeys
-                                T.DataConstructor constructorName paramTypes <-
-                                    view T.dataConstructors $ getPresentTypeDef currentCustomTypeDefs typeDefKey
-                                let constructorKey = T.DataConstructorKey typeDefKey constructorName
-                                let arity = length paramTypes
-                                let wildcards = replicate arity P.Wildcard
-                                return $ P.Constructor constructorKey wildcards
-                    typeDefKeys = getTypeDefKeys appState
-            maybeEditorExtent <- lookupExtent EditorName
-            setEditState appState $ EditingExpr editedExpr pathsToBeEdited newEditor $ AutocompleteState newAutocompleteList <$> maybeEditorExtent
+            if newEditorContent == "λ" || newEditorContent == "\\"
+            then editExprContainingSelection (const $ E.Fn $ pure (P.Wildcard, E.Hole)) ([0] NonEmpty.:| [[1]])
+            else do
+                let editorContentChanged = newEditorContent /= editorContent
+                let isSimilarToEditorContent str = map toLower newEditorContent `isInfixOf` map toLower str
+                let isMatch = isSimilarToEditorContent . printAutocompleteItem getCurrentExprName
+                newAutocompleteList <- case maybeAutocompleteState of
+                    Just (AutocompleteState autocompleteList _) | not editorContentChanged -> ListWidget.handleListEvent event autocompleteList
+                    _ -> pure $ ListWidget.list AutocompleteName items 1 where
+                        items = Vec.fromList $ filter isMatch $ case selected of
+                            Expr _ -> map Expr $ vars ++ primitives ++ defs ++ constructors where
+                                vars = E.Var <$> getVarsAtPath selectionPath (view expr def)
+                                primitives = E.Primitive <$> [minBound..]
+                                defs = E.Def <$> exprDefKeys
+                                constructors = E.Constructor <$> constructorKeys
+                                constructorKeys = typeDefKeys >>= getConstructorKeys
+                                getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
+                                getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
+                                getConstructors = view T.dataConstructors . getPresentTypeDef currentCustomTypeDefs
+                            Pattern _ -> map Pattern constructorPatterns where
+                                constructorPatterns = do
+                                    typeDefKey <- typeDefKeys
+                                    T.DataConstructor constructorName paramTypes <-
+                                        view T.dataConstructors $ getPresentTypeDef currentCustomTypeDefs typeDefKey
+                                    let constructorKey = T.DataConstructorKey typeDefKey constructorName
+                                    let arity = length paramTypes
+                                    let wildcards = replicate arity P.Wildcard
+                                    return $ P.Constructor constructorKey wildcards
+                        typeDefKeys = getTypeDefKeys appState
+                maybeEditorExtent <- lookupExtent EditorName
+                let newAutocompleteState = AutocompleteState newAutocompleteList <$> maybeEditorExtent
+                setEditState appState $ EditingExpr editedExpr pathsToBeEdited newEditor newAutocompleteState
         where editorContent = head $ getEditContents editor
     NotEditing -> case event of
         Vty.EvKey Vty.KEnter [] -> goToDefinition
@@ -622,7 +626,8 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         Vty.EvKey (Vty.KChar 'e') [] -> initiateSelectionEdit
         Vty.EvKey (Vty.KChar ')') [] -> callSelected
         Vty.EvKey (Vty.KChar '(') [] -> applyFnToSelected
-        Vty.EvKey (Vty.KChar 'f') [] -> wrapSelectedInFn
+        Vty.EvKey (Vty.KChar 'λ') [] -> wrapSelectedInFn
+        Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar '|') [] -> addAlternativeToSelected
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
         Vty.EvKey (Vty.KChar '\t') [] -> switchToNextWrappingStyle
