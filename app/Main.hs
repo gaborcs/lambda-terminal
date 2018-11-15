@@ -93,11 +93,14 @@ data TypeDefViewLocation = TypeDefViewLocation
     , _typeDefViewSelection :: TypeDefViewSelection
     }
 data TypeDefViewSelection
-    = TypeConstructorSelection (Maybe SelectedParamIndex)
-    | DataConstructorSelection SelectedDataConstructorIndex
+    = TypeConstructorSelection
+        { _typeConstructorParamIndex :: Maybe Int
+        }
+    | DataConstructorSelection
+        { _dataConstructorIndex :: Int
+        , _dataConstructorParamIndex :: Maybe Int
+        }
     deriving Eq
-type SelectedParamIndex = Int
-type SelectedDataConstructorIndex = Int
 data ExprDefViewLocation = ExprDefViewLocation
     { _exprDefKey :: ExprDefKey
     , _exprDefViewSelection :: Path
@@ -118,6 +121,7 @@ data Selection = ContainsSelection Path | WithinSelection | NoSelection deriving
 makeLenses ''AppState
 makeLenses ''ExprDef
 makeLenses ''TypeDefViewLocation
+makeLenses ''TypeDefViewSelection
 makeLenses ''ExprDefViewLocation
 makeLenses ''Clipboard
 makeLenses ''DerivedState
@@ -189,8 +193,8 @@ draw appState = case getLocation appState of
 
 drawDefListView :: AppState -> Maybe SelectedDefKey -> [AppWidget]
 drawDefListView appState maybeSelectedDefKey = [ renderTitle (str "Definitions") <=> renderedList ] where
-    renderedList = vBox $ renderItem <$> getDefKeys appState
-    renderItem key = grayIf (Just key /= maybeSelectedDefKey) (str $ getDefName appState key)
+    renderedList = toGray $ vBox $ renderItem <$> getDefKeys appState
+    renderItem key = highlightIf (Just key == maybeSelectedDefKey) (str $ getDefName appState key)
 
 getDefName :: AppState -> DefKey -> Name
 getDefName appState key = case key of
@@ -203,8 +207,8 @@ getTypeName appState key = fromMaybe "Unnamed" $ view (present . T.typeConstruct
 getExprName :: AppState -> ExprDefKey -> Name
 getExprName appState key = fromMaybe "unnamed" $ getExprDefs appState Map.! key ^. name
 
-grayIf :: Bool -> Widget n -> Widget n
-grayIf cond = if cond then toGray else id
+highlightIf :: Bool -> Widget n -> Widget n
+highlightIf cond = if cond then highlight else id
 
 toGray :: Widget n -> Widget n
 toGray = modifyDefAttr $ flip Vty.withForeColor gray
@@ -213,7 +217,7 @@ gray :: Vty.Color
 gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark backgrounds
 
 drawTypeDefView :: AppState -> TypeDefViewLocation -> [AppWidget]
-drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ renderedTitle <=> body ] where
+drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ toGray $ renderedTitle <=> body ] where
     renderedTitle = case view editState appState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ hBox $ intersperse (str " ") renderedTitleWords
@@ -222,8 +226,8 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ rendered
             renderedTypeName = toGray (str typeName)
             renderedParams = insertAt index (renderExpandingSingleLineEditor editor) (toGray . str <$> typeConstructorParams)
         _ -> renderedTypeName : renderedParams where
-            renderedTypeName = grayIf (selection /= TypeConstructorSelection Nothing) (str typeName)
-            renderedParams = zipWith (grayIf . not . isSelected) [0..] (str <$> typeConstructorParams)
+            renderedTypeName = highlightIf (selection == TypeConstructorSelection Nothing) (str typeName)
+            renderedParams = zipWith (highlightIf . isSelected) [0..] (str <$> typeConstructorParams)
             isSelected index =
                 selection == TypeConstructorSelection Nothing || selection == TypeConstructorSelection (Just index)
     typeName = getTypeName appState typeDefKey
@@ -232,11 +236,15 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ rendered
         AddingDataConstructor index editor -> insertAt index renderedEditor renderedDataConstructors where
             renderedEditor = renderEditor (str . head) True editor
         _ -> renderedDataConstructors
-    renderedDataConstructors = zipWith grayIfNotSelected [0..] $ renderDataConstructor <$> dataConstructors where
-        grayIfNotSelected index = grayIf $ selection /= DataConstructorSelection index
-    renderDataConstructor (T.DataConstructor name paramTypes) = str $ unwords $ name : printedParamTypes where
-        printedParamTypes = printParamType <$> paramTypes
-        printParamType t = inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) (view T.typeConstructorParams typeConstructor) t)
+    renderedDataConstructors = zipWith renderDataConstructor [0..] dataConstructors
+    renderDataConstructor dataConstructorIndex (T.DataConstructor name paramTypes) = highlightIf
+        (selection == DataConstructorSelection dataConstructorIndex Nothing)
+        (str name <+> str " " <+> hBox (intersperse (str " ") renderedParamTypes))
+        where
+            renderedParamTypes = zipWith renderParamType [0..] paramTypes
+            renderParamType paramIndex t = highlightIf
+                (selection == DataConstructorSelection dataConstructorIndex (Just paramIndex))
+                (str $ inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) (view T.typeConstructorParams typeConstructor) t))
     T.TypeDef typeConstructor dataConstructors = getPresentTypeDef (view typeDefs appState) typeDefKey
 
 insertAt :: Int -> a -> [a] -> [a]
@@ -484,7 +492,10 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar ' ') [] -> case selection of
             TypeConstructorSelection Nothing -> initiateAddTypeConstructorParam appState typeConstructorParamCount
             TypeConstructorSelection (Just paramIndex) -> initiateAddTypeConstructorParam appState $ paramIndex + 1
-            DataConstructorSelection index -> addParamToDataConstructor appState typeDefKey index
+            DataConstructorSelection dataConstructorIndex Nothing ->
+                addParamToDataConstructor appState typeDefKey dataConstructorIndex 0
+            DataConstructorSelection dataConstructorIndex (Just paramIndex) ->
+                addParamToDataConstructor appState typeDefKey dataConstructorIndex (paramIndex + 1)
         Vty.EvKey (Vty.KChar 'u') [] -> undo
         Vty.EvKey (Vty.KChar 'r') [] -> redo
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
@@ -506,46 +517,51 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         navBackward = setSelection $ case selection of
             TypeConstructorSelection Nothing -> TypeConstructorSelection Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection $ Just $ max (paramIndex - 1) 0
-            DataConstructorSelection index ->
-                if index > 0
-                then DataConstructorSelection $ index - 1
+            DataConstructorSelection dataConstructorIndex Nothing ->
+                if dataConstructorIndex > 0
+                then DataConstructorSelection (dataConstructorIndex - 1) Nothing
                 else TypeConstructorSelection Nothing
+            DataConstructorSelection dataConstructorIndex (Just paramIndex) ->
+                DataConstructorSelection dataConstructorIndex $ Just $ max (paramIndex - 1) 0
         navForward = setSelection $ case selection of
             TypeConstructorSelection Nothing ->
                 if dataConstructorCount > 0
-                then DataConstructorSelection 0
+                then DataConstructorSelection 0 Nothing
                 else TypeConstructorSelection Nothing
             TypeConstructorSelection (Just paramIndex) ->
                 TypeConstructorSelection $ Just $ min (paramIndex + 1) (typeConstructorParamCount - 1)
-            DataConstructorSelection index -> DataConstructorSelection $ min (index + 1) (dataConstructorCount - 1)
+            DataConstructorSelection dataConstructorIndex Nothing ->
+                DataConstructorSelection (min (dataConstructorIndex + 1) (dataConstructorCount - 1)) Nothing
+            DataConstructorSelection dataConstructorIndex (Just paramIndex) ->
+                DataConstructorSelection dataConstructorIndex $ Just $ min (paramIndex + 1) (paramCount - 1) where
+                    paramCount = length $ dataConstructors ^. ix dataConstructorIndex . T.dataConstructorParamTypes
         navToParent = setSelection $ case selection of
             TypeConstructorSelection _ -> TypeConstructorSelection Nothing
-            DataConstructorSelection index -> DataConstructorSelection index
+            DataConstructorSelection index _ -> DataConstructorSelection index Nothing
         navToChild = setSelection $ case selection of
             TypeConstructorSelection Nothing ->
                 TypeConstructorSelection $ if typeConstructorParamCount > 0 then Just 0 else Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection (Just paramIndex)
-            DataConstructorSelection index -> DataConstructorSelection index
+            DataConstructorSelection index Nothing -> DataConstructorSelection index (Just 0)
+            DataConstructorSelection index (Just paramIndex) -> DataConstructorSelection index (Just paramIndex)
         setSelection newSelection = continue $ appState
             & committedLocations . present . _TypeDefView . typeDefViewSelection .~ newSelection
         typeConstructorParamCount = length typeConstructorParams
         typeConstructorParams = appState ^. typeDefs . ix typeDefKey . present . T.typeConstructor . T.typeConstructorParams
-        dataConstructorCount = getDataConstructorCount appState typeDefKey
+        dataConstructorCount = length dataConstructors
+        dataConstructors = getDataConstructors appState typeDefKey
         initiateAddDataConstructorBelowSelection = initiateAddDataConstructor appState $ case selection of
             TypeConstructorSelection _ -> 0
-            DataConstructorSelection index -> index + 1
+            DataConstructorSelection index _ -> index + 1
         initiateAddDataConstructorAboveSelection = initiateAddDataConstructor appState $ case selection of
             TypeConstructorSelection _ -> 0
-            DataConstructorSelection index -> index
+            DataConstructorSelection index _ -> index
         undo = modifyTypeDefs appState $ ix typeDefKey %~ goBack
         redo = modifyTypeDefs appState $ ix typeDefKey %~ goForward
 
-addParamToDataConstructor :: AppState -> TypeDefKey -> Int -> EventM AppResourceName (Next AppState)
-addParamToDataConstructor appState typeDefKey dataConstructorIndex = modifyTypeDef typeDefKey f appState where
-    f = T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes %~ (T.Wildcard :)
-
-getDataConstructorCount :: AppState -> TypeDefKey -> Int
-getDataConstructorCount appState typeDefKey = length $ getDataConstructors appState typeDefKey
+addParamToDataConstructor :: AppState -> TypeDefKey -> Int -> Int -> EventM AppResourceName (Next AppState)
+addParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex = modifyTypeDef typeDefKey f appState where
+    f = T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes %~ insertAt paramIndex T.Wildcard
 
 getDataConstructors :: AppState -> TypeDefKey -> [DataConstructor]
 getDataConstructors appState typeDefKey = view (typeDefs . ix typeDefKey . present . T.dataConstructors) appState
@@ -857,7 +873,7 @@ commitAddDataConstructor appState typeDefKey index name =
     if isValidDataConstructorName name
     then appState
         & editState .~ NotEditing
-        & committedLocations . present . _TypeDefView . typeDefViewSelection .~ DataConstructorSelection index
+        & committedLocations . present . _TypeDefView . typeDefViewSelection .~ DataConstructorSelection index Nothing
         & modifyTypeDef typeDefKey (T.dataConstructors %~ insertAt index (T.DataConstructor name []))
     else continue appState
 
