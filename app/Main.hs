@@ -222,9 +222,8 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ toGray $
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ hBox $ intersperse (str " ") renderedTitleWords
     renderedTitleWords = case view editState appState of
-        AddingTypeConstructorParam index editor -> renderedTypeName : renderedParams where
-            renderedTypeName = toGray (str typeName)
-            renderedParams = insertAt index (renderExpandingSingleLineEditor editor) (toGray . str <$> typeConstructorParams)
+        AddingTypeConstructorParam index editor -> str typeName : renderedParams where
+            renderedParams = insertAt index (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
         _ -> renderedTypeName : renderedParams where
             renderedTypeName = highlightIf (selection == TypeConstructorSelection Nothing) (str typeName)
             renderedParams = zipWith (highlightIf . isSelected) [0..] (str <$> typeConstructorParams)
