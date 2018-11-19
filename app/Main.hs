@@ -59,10 +59,13 @@ data Clipboard = Clipboard
 data EditState
     = NotEditing
     | Naming EditorState
-    | AddingTypeConstructorParam AtIndex EditorState
-    | AddingDataConstructor AtIndex EditorState
+    | AddingTypeConstructorParam ParamIndex EditorState
+    | AddingDataConstructor DataConstructorIndex EditorState
+    | AddingDataConstructorParam DataConstructorIndex ParamIndex EditorState
     | SelectionRenaming EditorState
     | EditingExpr Expr PathsToBeEdited EditorState (Maybe AutocompleteState)
+type DataConstructorIndex = Int
+type ParamIndex = Int
 type PathsToBeEdited = NonEmpty.NonEmpty Path -- the first is the currently edited one
 data DerivedState = DerivedState
     { _inferResult :: InferResult
@@ -106,7 +109,6 @@ data ExprDefViewLocation = ExprDefViewLocation
     , _exprDefViewSelection :: Path
     }
 type EditorState = Editor String AppResourceName
-type AtIndex = Int
 data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
 type AutocompleteList = ListWidget.List AppResourceName Selectable
 type EditorExtent = Extent AppResourceName
@@ -240,10 +242,13 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ toGray $
         (selection == DataConstructorSelection dataConstructorIndex Nothing)
         (str name <+> str " " <+> hBox (intersperse (str " ") renderedParamTypes))
         where
-            renderedParamTypes = zipWith renderParamType [0..] paramTypes
-            renderParamType paramIndex t = highlightIf
-                (selection == DataConstructorSelection dataConstructorIndex (Just paramIndex))
-                (str $ inParensIf (isMultiWord t) (prettyPrintType (getTypeName appState) (view T.typeConstructorParams typeConstructor) t))
+            renderedParamTypes = zipWith (highlightIf . isSelected) [0..] $ case view editState appState of
+                AddingDataConstructorParam constructorIndex paramIndex editor | constructorIndex == dataConstructorIndex ->
+                    insertAt paramIndex (renderExpandingSingleLineEditor editor) $ renderParamType <$> paramTypes
+                _ -> renderParamType <$> paramTypes
+            renderParamType t = str $ inParensIf (isMultiWord t) (printType t)
+            printType = prettyPrintType (getTypeName appState) (view T.typeConstructorParams typeConstructor)
+            isSelected paramIndex = selection == DataConstructorSelection dataConstructorIndex (Just paramIndex)
     T.TypeDef typeConstructor dataConstructors = getPresentTypeDef (view typeDefs appState) typeDefKey
 
 insertAt :: Int -> a -> [a] -> [a]
@@ -492,9 +497,9 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
             TypeConstructorSelection Nothing -> initiateAddTypeConstructorParam appState typeConstructorParamCount
             TypeConstructorSelection (Just paramIndex) -> initiateAddTypeConstructorParam appState $ paramIndex + 1
             DataConstructorSelection dataConstructorIndex Nothing ->
-                addParamToDataConstructor appState typeDefKey dataConstructorIndex 0
+                initiateAddParamToDataConstructor appState dataConstructorIndex 0
             DataConstructorSelection dataConstructorIndex (Just paramIndex) ->
-                addParamToDataConstructor appState typeDefKey dataConstructorIndex (paramIndex + 1)
+                initiateAddParamToDataConstructor appState dataConstructorIndex (paramIndex + 1)
         Vty.EvKey (Vty.KChar 'u') [] -> undo
         Vty.EvKey (Vty.KChar 'r') [] -> redo
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
@@ -511,6 +516,10 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey index (head $ getEditContents editor)
         _ -> handleEditorEvent event editor >>= setEditState appState . AddingDataConstructor index
+    AddingDataConstructorParam dataConstructorIndex paramIndex editor -> case event of
+        Vty.EvKey Vty.KEsc [] -> cancelEdit appState
+        Vty.EvKey Vty.KEnter [] -> commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex (head $ getEditContents editor)
+        _ -> handleEditorEvent event editor >>= setEditState appState . AddingDataConstructorParam dataConstructorIndex paramIndex
     _ -> continue appState
     where
         navBackward = setSelection $ case selection of
@@ -558,9 +567,22 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         undo = modifyTypeDefs appState $ ix typeDefKey %~ goBack
         redo = modifyTypeDefs appState $ ix typeDefKey %~ goForward
 
-addParamToDataConstructor :: AppState -> TypeDefKey -> Int -> Int -> EventM AppResourceName (Next AppState)
-addParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex = modifyTypeDef typeDefKey f appState where
-    f = T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes %~ insertAt paramIndex T.Wildcard
+initiateAddParamToDataConstructor :: AppState -> Int -> Int -> EventM AppResourceName (Next AppState)
+initiateAddParamToDataConstructor appState dataConstructorIndex paramIndex =
+    setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex emptyEditor
+
+commitAddParamToDataConstructor :: AppState -> TypeDefKey -> Int -> Int -> String -> EventM AppResourceName (Next AppState)
+commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex editorContent =
+    if editorContent == "" || editorContent == "_"
+    then appState
+        & editState .~ NotEditing
+        & committedLocations . present . _TypeDefView . typeDefViewSelection . dataConstructorParamIndex ?~ paramIndex
+        & modifyTypeDef typeDefKey
+            (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes %~ insertAt paramIndex T.Wildcard)
+    else continue appState
+
+emptyEditor :: Editor String AppResourceName
+emptyEditor = editor EditorName (Just 1) ""
 
 getDataConstructors :: AppState -> TypeDefKey -> [DataConstructor]
 getDataConstructors appState typeDefKey = view (typeDefs . ix typeDefKey . present . T.dataConstructors) appState
@@ -734,7 +756,6 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 editedExpr = modifyAtPathInExpr modificationPath modify id (view expr def)
                 pathsToBeEdited = (modificationPath ++) <$> pathsToBeEditedFromModificationPath
         pathToExprContainingSelection = dropPatternPartOfPath (view expr def) selectionPath
-        emptyEditor = editor EditorName (Just 1) ""
         addAlternativeToSelected = maybe (continue appState) addAlternative (getContainingFunction selectionPath $ view expr def)
         addAlternative (fnPath, alts) = editExpr fnPath modify pathsToBeEditedFromFnPath where
             modify = const $ E.Fn $ alts <> pure (P.Wildcard, E.Hole)
@@ -850,11 +871,11 @@ setCurrentDefName newName appState = case getLocation appState of
     TypeDefView loc -> modifyTypeDef (view typeDefKey loc) (T.typeConstructor . T.typeConstructorName .~ newName) appState
     ExprDefView loc -> modifyExprDef (view exprDefKey loc) (name .~ newName) appState
 
-initiateAddTypeConstructorParam :: AppState -> AtIndex -> EventM AppResourceName (Next AppState)
+initiateAddTypeConstructorParam :: AppState -> ParamIndex -> EventM AppResourceName (Next AppState)
 initiateAddTypeConstructorParam appState index =
     continue $ appState & editState .~ AddingTypeConstructorParam index (editor EditorName (Just 1) "")
 
-initiateAddDataConstructor :: AppState -> AtIndex -> EventM AppResourceName (Next AppState)
+initiateAddDataConstructor :: AppState -> DataConstructorIndex -> EventM AppResourceName (Next AppState)
 initiateAddDataConstructor appState index =
     continue $ appState & editState .~ AddingDataConstructor index (editor EditorName (Just 1) "")
 
@@ -993,6 +1014,8 @@ getExprDefs appState = case (appState ^. editState, getLocation appState) of
 
 getLocation :: AppState -> Location
 getLocation appState = case appState ^. editState of
+    AddingDataConstructorParam dataConstructorIndex paramIndex _ ->
+        committedLocation & _TypeDefView . typeDefViewSelection .~ DataConstructorSelection dataConstructorIndex (Just paramIndex)
     EditingExpr _ path _ _ -> committedLocation & _ExprDefView . exprDefViewSelection .~ NonEmpty.head path
     _ -> committedLocation
     where committedLocation = appState ^. committedLocations . present
