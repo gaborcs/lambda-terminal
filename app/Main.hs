@@ -518,8 +518,17 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         _ -> handleEditorEvent event editor >>= setEditState appState . AddingDataConstructor index
     AddingDataConstructorParam dataConstructorIndex paramIndex editor -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
-        Vty.EvKey Vty.KEnter [] -> commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex (head $ getEditContents editor)
-        _ -> handleEditorEvent event editor >>= setEditState appState . AddingDataConstructorParam dataConstructorIndex paramIndex
+        Vty.EvKey Vty.KEnter [] ->
+            if editorContent == "" || editorContent == "_"
+            then commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Wildcard
+            else continue appState
+            where editorContent = head $ getEditContents editor
+        _ -> do
+            newEditor <- handleEditorEvent event editor
+            let newEditorContent = head $ getEditContents newEditor
+            if newEditorContent == "λ" || newEditorContent == "\\"
+            then commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Fn
+            else setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex newEditor
     _ -> continue appState
     where
         navBackward = setSelection $ case selection of
@@ -571,15 +580,12 @@ initiateAddParamToDataConstructor :: AppState -> Int -> Int -> EventM AppResourc
 initiateAddParamToDataConstructor appState dataConstructorIndex paramIndex =
     setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex emptyEditor
 
-commitAddParamToDataConstructor :: AppState -> TypeDefKey -> Int -> Int -> String -> EventM AppResourceName (Next AppState)
-commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex editorContent =
-    if editorContent == "" || editorContent == "_"
-    then appState
-        & editState .~ NotEditing
-        & committedLocations . present . _TypeDefView . typeDefViewSelection . dataConstructorParamIndex ?~ paramIndex
-        & modifyTypeDef typeDefKey
-            (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes %~ insertAt paramIndex T.Wildcard)
-    else continue appState
+commitAddParamToDataConstructor :: AppState -> TypeDefKey -> Int -> Int -> Type -> EventM AppResourceName (Next AppState)
+commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex t = appState
+    & editState .~ NotEditing
+    & committedLocations . present . _TypeDefView . typeDefViewSelection . dataConstructorParamIndex ?~ paramIndex
+    & modifyTypeDef typeDefKey
+        (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes %~ insertAt paramIndex t)
 
 emptyEditor :: Editor String AppResourceName
 emptyEditor = editor EditorName (Just 1) ""
