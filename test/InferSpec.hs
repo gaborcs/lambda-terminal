@@ -15,7 +15,7 @@ type ChildIndex = Int
 data TestType = BoolT | MaybeT deriving (Eq, Show)
 data TestDataConstructorKey = FalseC | TrueC | NothingC | JustC deriving (Eq, Show)
 
-getConstructorType :: TestDataConstructorKey -> Maybe (T.Type TestType)
+getConstructorType :: TestDataConstructorKey -> Maybe (T.Type Int TestType)
 getConstructorType key = Just $ case key of
     FalseC -> T.Constructor BoolT
     TrueC -> T.Constructor BoolT
@@ -63,12 +63,12 @@ defs = Map.fromList
     , ("intToBool", E.Fn ((P.Int 0, E.Constructor FalseC) NonEmpty.:| [(P.Wildcard, E.Constructor TrueC)]))
     ]
 
-hasType :: E.Expr String TestDataConstructorKey -> T.Type TestType -> Expectation
+hasType :: E.Expr String TestDataConstructorKey -> T.Type Int TestType -> Expectation
 hasType expr expectedType = case inferType getConstructorType defs expr of
     Typed (TypeTree actualType _) -> indexTVarsFromZero actualType `shouldBe` expectedType
     _ -> expectationFailure $ "type error for: " ++ show expr
 
-indexTVarsFromZero :: T.Type t -> T.Type t
+indexTVarsFromZero :: T.Type Int t -> T.Type Int t
 indexTVarsFromZero t = apply (Map.fromList $ zip (typeVars t) (T.Var <$> [0..])) t
 
 failsAtPath :: E.Expr String TestDataConstructorKey -> Path -> Expectation

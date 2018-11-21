@@ -80,7 +80,6 @@ type Expr = E.Expr ExprDefKey DataConstructorKey
 type DataConstructorKey = T.DataConstructorKey TypeDefKey
 type Alternative = E.Alternative ExprDefKey DataConstructorKey
 type Pattern = P.Pattern DataConstructorKey
-type Type = T.Type TypeDefKey
 type Value = V.Value DataConstructorKey
 type InferResult = Infer.InferResult TypeDefKey
 type TypeTree = Infer.TypeTree TypeDefKey
@@ -247,7 +246,7 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ toGray $
                     insertAt paramIndex (renderExpandingSingleLineEditor editor) $ renderParamType <$> paramTypes
                 _ -> renderParamType <$> paramTypes
             renderParamType t = str $ inParensIf (isMultiWord t) (printType t)
-            printType = prettyPrintType (getTypeName appState) (view T.typeConstructorParams typeConstructor)
+            printType = prettyPrintType (getTypeName appState)
             isSelected paramIndex = selection == DataConstructorSelection dataConstructorIndex (Just paramIndex)
     T.TypeDef typeConstructor dataConstructors = getPresentTypeDef (view typeDefs appState) typeDefKey
 
@@ -281,7 +280,7 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
-        Just t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) defaultTypeVarNames t
+        Just t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) (Infer.applyTotal (fmap T.Var defaultTypeVarNames !!) t)
         Nothing -> "Type error"
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
@@ -387,14 +386,14 @@ getChildTypeError :: Maybe TypeError -> ChildIndex -> Maybe TypeError
 getChildTypeError maybeTypeError index = childResult >>= preview Infer._TypeError
     where childResult = (!! index) <$> maybeTypeError
 
-getTypeAtPathInInferResult :: Path -> InferResult -> Maybe Type
+getTypeAtPathInInferResult :: Path -> InferResult -> Maybe (T.Type Infer.TVarId TypeDefKey)
 getTypeAtPathInInferResult path inferResult = case inferResult of
     Infer.Typed typeTree -> getTypeAtPathInTypeTree path typeTree
     Infer.TypeError childResults -> case path of
         [] -> Nothing
         index:restOfPath -> getTypeAtPathInInferResult restOfPath $ childResults !! index
 
-getTypeAtPathInTypeTree :: Path -> TypeTree -> Maybe Type
+getTypeAtPathInTypeTree :: Path -> TypeTree -> Maybe (T.Type Infer.TVarId TypeDefKey)
 getTypeAtPathInTypeTree path (Infer.TypeTree t children) = case path of
     [] -> Just t
     index:restOfPath -> getTypeAtPathInTypeTree restOfPath $ children !! index
@@ -580,7 +579,7 @@ initiateAddParamToDataConstructor :: AppState -> Int -> Int -> EventM AppResourc
 initiateAddParamToDataConstructor appState dataConstructorIndex paramIndex =
     setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex emptyEditor
 
-commitAddParamToDataConstructor :: AppState -> TypeDefKey -> Int -> Int -> Type -> EventM AppResourceName (Next AppState)
+commitAddParamToDataConstructor :: AppState -> TypeDefKey -> Int -> Int -> T.Type T.VarName TypeDefKey -> EventM AppResourceName (Next AppState)
 commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex t = appState
     & editState .~ NotEditing
     & committedLocations . present . _TypeDefView . typeDefViewSelection . dataConstructorParamIndex ?~ paramIndex

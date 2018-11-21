@@ -8,12 +8,12 @@ import Control.Lens
 import Data.List
 import GHC.Generics
 
-type VarId = Int
+type VarName = String
 
-data Type typeDefKey
+data Type typeVarKey typeDefKey
     = Wildcard
-    | Var VarId
-    | Call (Type typeDefKey) (Type typeDefKey)
+    | Var typeVarKey
+    | Call (Type typeVarKey typeDefKey) (Type typeVarKey typeDefKey)
     | Constructor typeDefKey
     | Fn
     | Int
@@ -26,12 +26,12 @@ data TypeDef typeDefKey = TypeDef
 
 data TypeConstructor = TypeConstructor
     { _typeConstructorName :: Maybe String
-    , _typeConstructorParams :: [String]
+    , _typeConstructorParams :: [VarName]
     } deriving (Read, Show)
 
 data DataConstructor typeDefKey = DataConstructor
     { _dataConstructorName :: String
-    , _dataConstructorParamTypes :: [Type typeDefKey]
+    , _dataConstructorParamTypes :: [Type VarName typeDefKey]
     } deriving (Read, Show, Functor)
 
 data DataConstructorKey typeDefKey = DataConstructorKey
@@ -45,13 +45,12 @@ makeLenses ''TypeConstructor
 makeLenses ''DataConstructor
 makeLenses ''DataConstructorKey
 
-fn :: Type t -> Type t -> Type t
+fn :: Type v d -> Type v d -> Type v d
 fn = Call . Call Fn
 
-getDataConstructorType :: (t -> TypeDef t) -> DataConstructorKey t -> Maybe (Type t)
+getDataConstructorType :: (d -> TypeDef d) -> DataConstructorKey d -> Maybe (Type VarName d)
 getDataConstructorType getTypeDef (DataConstructorKey typeDefKey constructorName) = foldr fn resultType <$> maybeParamTypes where
     TypeDef typeConstructor dataConstructors = getTypeDef typeDefKey
-    resultType = foldl Call (Constructor typeDefKey) typeVars
-    typeVars = Var <$> [0 .. length (view typeConstructorParams typeConstructor) - 1]
+    resultType = foldl Call (Constructor typeDefKey) $ Var <$> view typeConstructorParams typeConstructor
     maybeParamTypes = view dataConstructorParamTypes <$> maybeConstructorDef
     maybeConstructorDef = find ((== constructorName) . view dataConstructorName) dataConstructors

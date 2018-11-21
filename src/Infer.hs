@@ -13,36 +13,37 @@ import qualified Expr as E
 import qualified Pattern as P
 import qualified Type as T
 
-data InferResult t = Typed (TypeTree t) | TypeError (TypeError t) deriving Show
-data TypeTree t = TypeTree (T.Type t) [TypeTree t] deriving Show
-type TypeError t = [InferResult t]
-type TypeEnv t = Map.Map E.VarName (T.Type t)
+data InferResult d = Typed (TypeTree d) | TypeError (TypeError d) deriving Show
+data TypeTree d = TypeTree (T.Type TVarId d) [TypeTree d] deriving Show
+type TypeError d = [InferResult d]
+type TypeEnv d = Map.Map E.VarName (T.Type TVarId d)
 type Infer = State NextTVarId
-type NextTVarId = T.VarId
-data IntermediateTree t = TypedIntermediate (TypedIntermediateTree t) | UntypedIntermediate [IntermediateTree t]
-data TypedIntermediateTree t = TypedIntermediateTree (T.Type t) [TypeEqualityConstraint t] [TypedIntermediateTree t]
-type TypeEqualityConstraint t = (T.Type t, T.Type t)
-type Substitution t = Map.Map T.VarId (T.Type t)
+type NextTVarId = TVarId
+type TVarId = Int
+data IntermediateTree d = TypedIntermediate (TypedIntermediateTree d) | UntypedIntermediate [IntermediateTree d]
+data TypedIntermediateTree d = TypedIntermediateTree (T.Type TVarId d) [TypeEqualityConstraint d] [TypedIntermediateTree d]
+type TypeEqualityConstraint d = (T.Type TVarId d, T.Type TVarId d)
+type Substitution d = Map.Map TVarId (T.Type TVarId d)
 data InfiniteType = InfiniteType
 
 makePrisms ''InferResult
 makePrisms ''IntermediateTree
 
-inferType :: (Eq t, Ord d)
-    => (c -> Maybe (T.Type t))
-    -> Map.Map d (E.Expr d c)
-    -> E.Expr d c
-    -> InferResult t
+inferType :: (Ord ed, Ord tv, Eq td)
+    => (c -> Maybe (T.Type tv td))
+    -> Map.Map ed (E.Expr ed c)
+    -> E.Expr ed c
+    -> InferResult td
 inferType getConstructorType defs expr = solve intermediateTree where
     intermediateTree = evalState (infer instantiateConstructorType (Map.map Right defs) Map.empty expr) 0
     instantiateConstructorType key = instantiate <$> getConstructorType key
 
-infer :: Ord d
-    => (c -> Maybe (Infer (T.Type t)))
-    -> Map.Map d (Either (T.Type t) (E.Expr d c))
-    -> TypeEnv t
-    -> E.Expr d c
-    -> Infer (IntermediateTree t)
+infer :: Ord ed
+    => (c -> Maybe (Infer (T.Type TVarId td)))
+    -> Map.Map ed (Either (T.Type TVarId td) (E.Expr ed c))
+    -> TypeEnv td
+    -> E.Expr ed c
+    -> Infer (IntermediateTree td)
 infer instantiateConstructorType defs env expr = case expr of
     E.Hole -> TypedIntermediate <$> (TypedIntermediateTree <$> freshTVar <*> pure [] <*> pure [])
     E.Def defId -> case Map.lookup defId defs of
@@ -91,21 +92,21 @@ infer instantiateConstructorType defs env expr = case expr of
         Nothing -> return $ UntypedIntermediate []
     E.Int _ -> return $ TypedIntermediate $ TypedIntermediateTree T.Int [] []
     E.Primitive p -> do
-        t <- instantiate $ getType p
+        t <- instantiate (getType p :: T.Type TVarId d)
         return $ TypedIntermediate $ TypedIntermediateTree t [] []
 
-inferAlternative :: Ord d
-    => (c -> Maybe (Infer (T.Type t)))
-    -> Map.Map d (Either (T.Type t) (E.Expr d c))
-    -> TypeEnv t
-    -> E.Alternative d c
-    -> Infer (IntermediateTree t, IntermediateTree t)
+inferAlternative :: Ord ed
+    => (c -> Maybe (Infer (T.Type TVarId td)))
+    -> Map.Map ed (Either (T.Type TVarId td) (E.Expr ed c))
+    -> TypeEnv td
+    -> E.Alternative ed c
+    -> Infer (IntermediateTree td, IntermediateTree td)
 inferAlternative instantiateConstructorType defs env (patt, expr) = do
     (patternTree, patternTypeEnv) <- inferPattern instantiateConstructorType patt
     exprTree <- infer instantiateConstructorType defs (Map.union patternTypeEnv env) expr
     return (patternTree, exprTree)
 
-inferPattern :: (c -> Maybe (Infer (T.Type t))) -> P.Pattern c -> Infer (IntermediateTree t, TypeEnv t)
+inferPattern :: (c -> Maybe (Infer (T.Type TVarId d))) -> P.Pattern c -> Infer (IntermediateTree d, TypeEnv d)
 inferPattern instantiateConstructorType patt = case patt of
     P.Wildcard -> do
         tv <- freshTVar
@@ -127,25 +128,25 @@ inferPattern instantiateConstructorType patt = case patt of
             _ -> return (UntypedIntermediate childTrees, typeEnv)
     P.Int _ -> return (TypedIntermediate $ TypedIntermediateTree T.Int [] [], Map.empty)
 
-freshTVar :: Infer (T.Type t)
+freshTVar :: Infer (T.Type TVarId d)
 freshTVar = do
     nextTVarId <- get
     put $ nextTVarId + 1
     return $ T.Var nextTVarId
 
-instantiate :: T.Type t -> Infer (T.Type t)
+instantiate :: Ord v => T.Type v d -> Infer (T.Type TVarId d)
 instantiate t = do
     subst <- Map.fromList <$> traverse pairWithFreshTVar (typeVars t)
-    return $ apply subst t
+    return $ applyTotal (subst Map.!) t
 
-pairWithFreshTVar :: T.VarId -> Infer (T.VarId, T.Type t)
+pairWithFreshTVar :: v -> Infer (v, T.Type TVarId d)
 pairWithFreshTVar var = (,) var <$> freshTVar
 
-solve :: Eq t => IntermediateTree t -> InferResult t
+solve :: Eq d => IntermediateTree d -> InferResult d
 solve intermediateTree = applyToInferResult subst unsubstitutedInferResult where
     (subst, unsubstitutedInferResult) = solve' Map.empty intermediateTree
 
-solve' :: Eq t => Substitution t -> IntermediateTree t -> (Substitution t, InferResult t)
+solve' :: Eq d => Substitution d -> IntermediateTree d -> (Substitution d, InferResult d)
 solve' initialSubst tree = (finalSubst, inferResult) where
     (maybeType, constraints, children) = case tree of
         TypedIntermediate (TypedIntermediateTree t constraints children) -> (Just t, constraints, TypedIntermediate <$> children)
@@ -162,10 +163,10 @@ solve' initialSubst tree = (finalSubst, inferResult) where
     maybeTypeTrees = traverse (preview _Typed) childInferResults
     childInferResults = reverse reversedChildInferResults
 
-compose :: Substitution t -> Substitution t -> Substitution t
+compose :: Substitution d -> Substitution d -> Substitution d
 compose s1 s2 = Map.map (apply s1) s2 `Map.union` s1
 
-unify :: Eq t => T.Type t -> T.Type t -> Maybe (Substitution t)
+unify :: Eq d => T.Type TVarId d -> T.Type TVarId d -> Maybe (Substitution d)
 unify t1 t2 = case (t1, t2) of
     (T.Wildcard, _) -> Just Map.empty
     (_, T.Wildcard) -> Just Map.empty
@@ -180,12 +181,12 @@ unify t1 t2 = case (t1, t2) of
     (T.Int, T.Int) -> Just Map.empty
     _ -> Nothing
 
-bind :: T.VarId -> T.Type t -> Either InfiniteType (Substitution t)
+bind :: TVarId -> T.Type TVarId d -> Either InfiniteType (Substitution d)
 bind var t = case t of
     T.Var v | v == var -> Right Map.empty
     _ -> if var `elem` typeVars t then Left InfiniteType else Right $ Map.singleton var t
 
-typeVars :: T.Type t -> [T.VarId]
+typeVars :: Eq v => T.Type v d -> [v]
 typeVars t = case t of
     T.Wildcard -> []
     T.Var var -> [var]
@@ -194,22 +195,25 @@ typeVars t = case t of
     T.Fn -> []
     T.Int -> []
 
-apply :: Substitution t -> T.Type t -> T.Type t
-apply subst t = case t of
+apply :: Substitution d -> T.Type TVarId d -> T.Type TVarId d
+apply subst = applyTotal (\var -> Map.findWithDefault (T.Var var) var subst)
+
+applyTotal :: (v1 -> T.Type v2 d) -> T.Type v1 d -> T.Type v2 d
+applyTotal f t = case t of
     T.Wildcard -> T.Wildcard
-    T.Var var -> Map.findWithDefault t var subst
-    T.Call a b -> T.Call (apply subst a) (apply subst b)
+    T.Var var -> f var
+    T.Call a b -> T.Call (applyTotal f a) (applyTotal f b)
     T.Constructor name -> T.Constructor name
     T.Fn -> T.Fn
     T.Int -> T.Int
 
-applyToInferResult :: Substitution t -> InferResult t -> InferResult t
+applyToInferResult :: Substitution d -> InferResult d -> InferResult d
 applyToInferResult subst inferResult = case inferResult of
     Typed typeTree -> Typed $ applyToTypeTree subst typeTree
     TypeError childResults -> TypeError $ applyToInferResult subst <$> childResults
 
-applyToTypeTree :: Substitution t -> TypeTree t -> TypeTree t
+applyToTypeTree :: Substitution d -> TypeTree d -> TypeTree d
 applyToTypeTree subst (TypeTree t children) = TypeTree (apply subst t) (applyToTypeTree subst <$> children)
 
-hasErrorAtRoot :: TypeError t -> Bool
+hasErrorAtRoot :: TypeError d -> Bool
 hasErrorAtRoot = all $ is _Typed

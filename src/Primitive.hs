@@ -15,7 +15,7 @@ getDisplayName p = case p of
     Minus -> "-"
     Times -> "*"
 
-getType :: Primitive -> T.Type t
+getType :: Primitive -> T.Type v d
 getType p = case p of
     Plus -> binaryIntOpType T.Int
     Minus -> binaryIntOpType T.Int
@@ -27,7 +27,7 @@ getValue p = case p of
     Minus -> binaryIntOpValue $ \a b -> V.Int (a - b)
     Times -> binaryIntOpValue $ \a b -> V.Int (a * b)
 
-binaryIntOpType :: T.Type t -> T.Type t
+binaryIntOpType :: T.Type v d -> T.Type v d
 binaryIntOpType resultType = T.fn T.Int $ T.fn T.Int resultType
 
 binaryIntOpValue :: (Int -> Int -> V.Value t) -> V.Value t
