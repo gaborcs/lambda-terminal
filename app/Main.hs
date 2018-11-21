@@ -517,12 +517,12 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         _ -> handleEditorEvent event editor >>= setEditState appState . AddingDataConstructor index
     AddingDataConstructorParam dataConstructorIndex paramIndex editor -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
-        Vty.EvKey Vty.KEnter [] ->
-            if editorContent == "" || editorContent == "_"
-                then commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Wildcard
-                else if isValidTypeVarName editorContent
-                    then commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex (T.Var editorContent)
-                    else continue appState
+        Vty.EvKey Vty.KEnter []
+            | editorContent == "" || editorContent == "_" ->
+                commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Wildcard
+            | isValidTypeVarName editorContent ->
+                commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex (T.Var editorContent)
+            | otherwise -> continue appState
             where editorContent = head $ getEditContents editor
         _ -> do
             newEditor <- handleEditorEvent event editor
