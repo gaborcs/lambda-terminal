@@ -519,8 +519,10 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] ->
             if editorContent == "" || editorContent == "_"
-            then commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Wildcard
-            else continue appState
+                then commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Wildcard
+                else if isValidTypeVarName editorContent
+                    then commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex (T.Var editorContent)
+                    else continue appState
             where editorContent = head $ getEditContents editor
         _ -> do
             newEditor <- handleEditorEvent event editor
@@ -827,6 +829,9 @@ isValidExprName name = case name of
 
 isValidDataConstructorName :: Name -> Bool
 isValidDataConstructorName = isValidTypeName
+
+isValidTypeVarName :: Name -> Bool
+isValidTypeVarName = isValidVarName
 
 isValidVarName :: Name -> Bool
 isValidVarName = isValidExprName
