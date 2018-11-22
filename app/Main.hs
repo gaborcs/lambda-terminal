@@ -46,6 +46,7 @@ data AppState = AppState
     , _wrappingStyle :: WrappingStyle
     , _clipboard :: Clipboard
     , _editState :: EditState
+    , _editorExtent :: Maybe (Extent AppResourceName)
     , _derivedState :: Maybe DerivedState
     }
 data ExprDef = ExprDef
@@ -61,9 +62,9 @@ data EditState
     | Naming EditorState
     | AddingTypeConstructorParam ParamIndex EditorState
     | AddingDataConstructor DataConstructorIndex EditorState
-    | AddingDataConstructorParam DataConstructorIndex ParamIndex EditorState
+    | AddingDataConstructorParam DataConstructorIndex ParamIndex EditorState (Maybe (AutocompleteList TypeDefKey))
     | SelectionRenaming EditorState
-    | EditingExpr Expr PathsToBeEdited EditorState (Maybe AutocompleteState)
+    | EditingExpr Expr PathsToBeEdited EditorState (Maybe (AutocompleteList Selectable))
 type DataConstructorIndex = Int
 type ParamIndex = Int
 type PathsToBeEdited = NonEmpty.NonEmpty Path -- the first is the currently edited one
@@ -108,9 +109,7 @@ data ExprDefViewLocation = ExprDefViewLocation
     , _exprDefViewSelection :: Path
     }
 type EditorState = Editor String AppResourceName
-data AutocompleteState = AutocompleteState AutocompleteList EditorExtent
-type AutocompleteList = ListWidget.List AppResourceName Selectable
-type EditorExtent = Extent AppResourceName
+type AutocompleteList = ListWidget.List AppResourceName
 data EvalResult = Timeout | Error | Value Value
 data Selectable = Expr Expr | Pattern Pattern deriving Eq
 newtype RenderChild = RenderChild (ChildIndex -> Renderer -> RenderResult)
@@ -141,7 +140,7 @@ getInitialState = do
     let clipboard = Clipboard Nothing Nothing
     let defKeys = (TypeDefKey <$> Map.keys typeDefs) ++ (ExprDefKey <$> Map.keys exprDefs)
     let locationHistory = History.create $ DefListView $ listToMaybe defKeys
-    return $ AppState typeDefs exprDefs locationHistory NoParens clipboard NotEditing Nothing
+    return $ AppState typeDefs exprDefs locationHistory NoParens clipboard NotEditing Nothing Nothing
 
 readTypeDefs :: IO (Map.Map TypeDefKey TypeDef)
 readTypeDefs = do
@@ -218,7 +217,13 @@ gray :: Vty.Color
 gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark backgrounds
 
 drawTypeDefView :: AppState -> TypeDefViewLocation -> [AppWidget]
-drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ toGray $ renderedTitle <=> body ] where
+drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
+    ui = case (view editState appState, view editorExtent appState) of
+        (AddingDataConstructorParam _ _ _ (Just autocompleteList), Just editorExtent) -> [ autocompleteLayer, mainLayer ] where
+            autocompleteLayer = renderAutocomplete autocompleteList printItem editorExtent
+            printItem = getTypeName appState
+        _ -> [ mainLayer ]
+    mainLayer = toGray $ renderedTitle <=> body
     renderedTitle = case view editState appState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ hBox $ intersperse (str " ") renderedTitleWords
@@ -242,7 +247,7 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = [ toGray $
         (str name <+> str " " <+> hBox (intersperse (str " ") renderedParamTypes))
         where
             renderedParamTypes = zipWith (highlightIf . isSelected) [0..] $ case view editState appState of
-                AddingDataConstructorParam constructorIndex paramIndex editor | constructorIndex == dataConstructorIndex ->
+                AddingDataConstructorParam constructorIndex paramIndex editor _ | constructorIndex == dataConstructorIndex ->
                     insertAt paramIndex (renderExpandingSingleLineEditor editor) $ renderParamType <$> paramTypes
                 _ -> renderParamType <$> paramTypes
             renderParamType t = str $ inParensIf (isMultiWord t) (printType t)
@@ -257,19 +262,22 @@ renderExpandingSingleLineEditor :: (Ord n, Show n) => Editor String n -> Widget 
 renderExpandingSingleLineEditor editor = hLimit (textWidth editStr + 1) $ renderEditor (str . head) True editor where
     editStr = head $ getEditContents editor
 
+renderAutocomplete autocompleteList printItem editorExtent = translateBy autocompleteOffset autocomplete where
+    autocompleteOffset = Brick.Types.Location (editorX, editorY + 1)
+    Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
+    autocomplete = hLimit 20 $ vLimit (min autocompleteListLength 5) $
+        ListWidget.renderList renderAutocompleteItem True $ printItem <$> autocompleteList
+    autocompleteListLength = length $ ListWidget.listElements autocompleteList
+
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
 drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
-    AppState _ _ _ wrappingStyle _ editState (Just (DerivedState inferResult evalResult)) = appState
-    ui = case editState of
-        EditingExpr _ _ _ (Just (AutocompleteState autocompleteList editorExtent)) | autocompleteListLength > 0 ->
-            [ translateBy autocompleteOffset autocomplete, layout ] where
-            autocompleteOffset = Brick.Types.Location (editorX, editorY + 1)
-            Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
-            autocomplete = hLimit 20 $ vLimit (min autocompleteListLength 5) $
-                ListWidget.renderList renderAutocompleteItem True $ printAutocompleteItem (getExprName appState) <$> autocompleteList
-            autocompleteListLength = length $ ListWidget.listElements autocompleteList
-        _ -> [ layout ]
-    layout = renderedTitle <=> viewport Viewport Both coloredExpr <=> str bottomStr
+    AppState _ _ _ wrappingStyle _ editState _ (Just (DerivedState inferResult evalResult)) = appState
+    ui = case (editState, view editorExtent appState) of
+        (EditingExpr _ _ _ (Just autocompleteList), Just editorExtent) -> [ autocompleteLayer, mainLayer ] where
+            autocompleteLayer = renderAutocomplete autocompleteList printItem editorExtent
+            printItem = printAutocompleteItem (getExprName appState)
+        _ -> [ mainLayer ]
+    mainLayer = renderedTitle <=> viewport Viewport Both coloredExpr <=> str bottomStr
     renderedTitle = case editState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ str $ getExprName appState defKey
@@ -427,7 +435,12 @@ getChildInPattern patt index = case patt of
     _ -> Nothing
 
 handleEvent :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
-handleEvent appState brickEvent = case brickEvent of
+handleEvent appState event = do
+    maybeEditorExtent <- lookupExtent EditorName
+    handleEvent' (appState & editorExtent .~ maybeEditorExtent) event
+
+handleEvent' :: AppState -> BrickEvent n e -> EventM AppResourceName (Next AppState)
+handleEvent' appState brickEvent = case brickEvent of
     VtyEvent event -> case getLocation appState of
         DefListView maybeSelectedDefKey -> handleEventOnDefListView appState event maybeSelectedDefKey
         TypeDefView location -> handleEventOnTypeDefView appState event location
@@ -515,23 +528,36 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey index (head $ getEditContents editor)
         _ -> handleEditorEvent event editor >>= setEditState appState . AddingDataConstructor index
-    AddingDataConstructorParam dataConstructorIndex paramIndex editor -> case event of
+    AddingDataConstructorParam dataConstructorIndex paramIndex editor maybeAutocompleteList -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
+        Vty.EvKey (Vty.KChar '\t') [] -> case maybeAutocompleteList >>= ListWidget.listSelectedElement of
+            Just (_, selectedDefKey) ->
+                commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex $ T.Constructor selectedDefKey
+            Nothing -> continue appState
         Vty.EvKey Vty.KEnter []
             | editorContent == "" || editorContent == "_" ->
                 commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Wildcard
             | isValidTypeVarName editorContent ->
                 commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex (T.Var editorContent)
             | otherwise -> continue appState
-            where editorContent = head $ getEditContents editor
         _ -> do
-            newEditor <- handleEditorEvent event editor
+            newEditor <- handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
             if newEditorContent == "λ" || newEditorContent == "\\"
             then commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Fn
-            else setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex newEditor
+            else do
+                let editorContentChanged = newEditorContent /= editorContent
+                let isMatch typeDefKey = getTypeName appState typeDefKey `containsIgnoringCase` newEditorContent
+                let items = Vec.fromList $ filter isMatch typeDefKeys
+                newAutocompleteList <- case maybeAutocompleteList of
+                    Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
+                    _ | null items -> pure Nothing
+                    _ -> pure $ Just $ ListWidget.list AutocompleteName items 1
+                setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex newEditor newAutocompleteList
+        where editorContent = head $ getEditContents editor
     _ -> continue appState
     where
+        typeDefKeys = Map.keys $ appState ^. typeDefs
         navBackward = setSelection $ case selection of
             TypeConstructorSelection Nothing -> TypeConstructorSelection Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection $ Just $ max (paramIndex - 1) 0
@@ -579,7 +605,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
 
 initiateAddParamToDataConstructor :: AppState -> Int -> Int -> EventM AppResourceName (Next AppState)
 initiateAddParamToDataConstructor appState dataConstructorIndex paramIndex =
-    setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex emptyEditor
+    setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex emptyEditor Nothing
 
 commitAddParamToDataConstructor :: AppState -> TypeDefKey -> Int -> Int -> T.Type T.VarName TypeDefKey -> EventM AppResourceName (Next AppState)
 commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex t = appState
@@ -597,6 +623,15 @@ getDataConstructors appState typeDefKey = view (typeDefs . ix typeDefKey . prese
 setEditState :: AppState -> EditState -> EventM AppResourceName (Next AppState)
 setEditState appState newEditState = continue $ appState & editState .~ newEditState
 
+containsIgnoringCase :: String -> String -> Bool
+containsIgnoringCase s1 s2 = map toLower s2 `isInfixOf` map toLower s1
+
+handleEditorEventIgnoringAutocompleteControls event editor = case event of
+    -- ignore up/down as they are used to control the autocomplete
+    Vty.EvKey Vty.KUp [] -> pure editor
+    Vty.EvKey Vty.KDown [] -> pure editor
+    _ -> handleEditorEvent event editor
+
 handleEventOnExprDefView :: AppState -> Vty.Event -> ExprDefViewLocation -> EventM AppResourceName (Next AppState)
 handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPath) = case currentEditState of
     Naming editor -> case event of
@@ -609,50 +644,46 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         _ -> do
             newEditor <- handleEditorEvent event editor
             setEditState appState $ SelectionRenaming newEditor
-    EditingExpr editedExpr pathsToBeEdited editor maybeAutocompleteState -> case event of
+    EditingExpr editedExpr pathsToBeEdited editor maybeAutocompleteList -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
-        Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) (commitAutocompleteSelection editedExpr pathsToBeEdited) maybeAutocompleteState
+        Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) (commitAutocompleteSelection editedExpr pathsToBeEdited) maybeAutocompleteList
         Vty.EvKey Vty.KEnter [] -> commitEditorContent editedExpr pathsToBeEdited editorContent
         _ -> do
-            newEditor <- case event of
-                -- ignore up/down as they are used to control the autocomplete
-                Vty.EvKey Vty.KUp [] -> pure editor
-                Vty.EvKey Vty.KDown [] -> pure editor
-                _ -> handleEditorEvent event editor
+            newEditor <- handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
             if newEditorContent == "λ" || newEditorContent == "\\"
             then editExprContainingSelection (const $ E.Fn $ pure (P.Wildcard, E.Hole)) ([0] NonEmpty.:| [[1]])
             else do
                 let editorContentChanged = newEditorContent /= editorContent
-                let isSimilarToEditorContent str = map toLower newEditorContent `isInfixOf` map toLower str
-                let isMatch = isSimilarToEditorContent . printAutocompleteItem getCurrentExprName
-                newAutocompleteList <- case maybeAutocompleteState of
-                    Just (AutocompleteState autocompleteList _) | not editorContentChanged -> ListWidget.handleListEvent event autocompleteList
-                    _ -> pure $ ListWidget.list AutocompleteName items 1 where
-                        items = Vec.fromList $ filter isMatch $ case selected of
-                            Expr _ -> map Expr $ vars ++ primitives ++ defs ++ constructors where
-                                vars = E.Var <$> getVarsAtPath selectionPath (view expr def)
-                                primitives = E.Primitive <$> [minBound..]
-                                defs = E.Def <$> exprDefKeys
-                                constructors = E.Constructor <$> constructorKeys
-                                constructorKeys = typeDefKeys >>= getConstructorKeys
-                                getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
-                                getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
-                                getConstructors = view T.dataConstructors . getPresentTypeDef currentCustomTypeDefs
-                            Pattern _ -> map Pattern constructorPatterns where
-                                constructorPatterns = do
-                                    typeDefKey <- typeDefKeys
-                                    T.DataConstructor constructorName paramTypes <-
-                                        view T.dataConstructors $ getPresentTypeDef currentCustomTypeDefs typeDefKey
-                                    let constructorKey = T.DataConstructorKey typeDefKey constructorName
-                                    let arity = length paramTypes
-                                    let wildcards = replicate arity P.Wildcard
-                                    return $ P.Constructor constructorKey wildcards
-                        typeDefKeys = getTypeDefKeys appState
-                maybeEditorExtent <- lookupExtent EditorName
-                let newAutocompleteState = AutocompleteState newAutocompleteList <$> maybeEditorExtent
-                setEditState appState $ EditingExpr editedExpr pathsToBeEdited newEditor newAutocompleteState
-        where editorContent = head $ getEditContents editor
+                let isMatch item = printAutocompleteItem getCurrentExprName item `containsIgnoringCase` newEditorContent
+                let items = Vec.fromList $ filter isMatch autocompleteItems
+                newAutocompleteList <- case maybeAutocompleteList of
+                    Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
+                    _ | null items -> pure Nothing
+                    _ -> pure $ Just $ ListWidget.list AutocompleteName items 1
+                setEditState appState $ EditingExpr editedExpr pathsToBeEdited newEditor newAutocompleteList
+        where
+            editorContent = head $ getEditContents editor
+            autocompleteItems = case selected of
+                Expr _ -> map Expr $ vars ++ primitives ++ defs ++ constructors where
+                    vars = E.Var <$> getVarsAtPath selectionPath (view expr def)
+                    primitives = E.Primitive <$> [minBound..]
+                    defs = E.Def <$> exprDefKeys
+                    constructors = E.Constructor <$> constructorKeys
+                    constructorKeys = typeDefKeys >>= getConstructorKeys
+                    getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
+                    getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
+                    getConstructors = view T.dataConstructors . getPresentTypeDef currentCustomTypeDefs
+                Pattern _ -> map Pattern constructorPatterns where
+                    constructorPatterns = do
+                        typeDefKey <- typeDefKeys
+                        T.DataConstructor constructorName paramTypes <-
+                            view T.dataConstructors $ getPresentTypeDef currentCustomTypeDefs typeDefKey
+                        let constructorKey = T.DataConstructorKey typeDefKey constructorName
+                        let arity = length paramTypes
+                        let wildcards = replicate arity P.Wildcard
+                        return $ P.Constructor constructorKey wildcards
+            typeDefKeys = getTypeDefKeys appState
     NotEditing -> case event of
         Vty.EvKey Vty.KEnter [] -> goToDefinition
         Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
@@ -731,7 +762,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
             _ | isValidVarName editorContent -> commitEdit path furtherPathsToBeEdited newExpr where
                 newExpr = modifyAtPathInExpr path (const $ E.Var editorContent) (const $ P.Var editorContent) editedExpr
             _ -> continue appState
-        commitAutocompleteSelection editedExpr (path NonEmpty.:| furtherPathsToBeEdited) (AutocompleteState autocompleteList _) =
+        commitAutocompleteSelection editedExpr (path NonEmpty.:| furtherPathsToBeEdited) autocompleteList =
             case ListWidget.listSelectedElement autocompleteList of
                 Just (_, selectedItem) -> case selectedItem of
                     Expr expr -> commitEdit path furtherPathsToBeEdited newExpr where
@@ -1024,7 +1055,7 @@ getExprDefs appState = case (appState ^. editState, getLocation appState) of
 
 getLocation :: AppState -> Location
 getLocation appState = case appState ^. editState of
-    AddingDataConstructorParam dataConstructorIndex paramIndex _ ->
+    AddingDataConstructorParam dataConstructorIndex paramIndex _ _ ->
         committedLocation & _TypeDefView . typeDefViewSelection .~ DataConstructorSelection dataConstructorIndex (Just paramIndex)
     EditingExpr _ path _ _ -> committedLocation & _ExprDefView . exprDefViewSelection .~ NonEmpty.head path
     _ -> committedLocation
