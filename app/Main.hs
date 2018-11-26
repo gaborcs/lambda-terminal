@@ -595,6 +595,8 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
             commit = commitDataConstructorEdit appState typeDefKey dataConstructorIndex dataConstructor paramIndex path
     _ -> continue appState
     where
+        defHistory = view committedTypeDefs appState Map.! typeDefKey
+        def = currentTypeDefs Map.! typeDefKey
         currentTypeDefs = getTypeDefs appState
         typeDefKeys = getTypeDefKeys appState
         navBackward = setSelection $ case selection of
@@ -687,8 +689,25 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                         dataConstructor = dataConstructors !! dataConstructorIndex
                             & T.dataConstructorParamTypes . ix paramIndex %~ modifyAtPathInType path modify
             _ -> appState
-        undo = modifyTypeDefs appState $ ix typeDefKey %~ goBack
-        redo = modifyTypeDefs appState $ ix typeDefKey %~ goForward
+        undo = modifyDefHistory goBack
+        redo = modifyDefHistory goForward
+        modifyDefHistory modify = liftIO createAppState >>= continue where
+            createAppState = handleTypeDefsChange $ appState
+                & committedTypeDefs . ix typeDefKey .~ newDefHistory
+                & committedLocations . present . _TypeDefView . typeDefViewSelection .~ newSelection
+            newDefHistory = modify defHistory
+            newSelection
+                | newDef ^. T.typeConstructor /= def ^. T.typeConstructor || newDataConstructorCount == 0 =
+                    TypeConstructorSelection Nothing
+                | newDataConstructorCount /= dataConstructorCount =
+                    DataConstructorSelection (newDataConstructorCount - 1) Nothing
+                | otherwise = case catMaybes $ zipWith (fmap . (,)) [0..] diffPaths of
+                    [] -> selection
+                    (dataConstructorIndex, path) : _ -> DataConstructorSelection dataConstructorIndex $ preview _Cons path
+            newDef = view present newDefHistory
+            newDataConstructorCount = length newDataConstructors
+            newDataConstructors = newDef ^. T.dataConstructors
+            diffPaths = zipWith getDiffPathBetweenDataConstructors newDataConstructors dataConstructors
 
 commitDataConstructorEdit ::
     AppState

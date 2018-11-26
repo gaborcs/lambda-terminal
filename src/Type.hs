@@ -27,7 +27,7 @@ data TypeDef typeDefKey = TypeDef
 data TypeConstructor = TypeConstructor
     { _typeConstructorName :: Maybe String
     , _typeConstructorParams :: [VarName]
-    } deriving (Read, Show)
+    } deriving (Eq, Read, Show)
 
 data DataConstructor typeDefKey = DataConstructor
     { _dataConstructorName :: String
