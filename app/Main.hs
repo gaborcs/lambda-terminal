@@ -5,6 +5,7 @@ module Main where
 import Control.DeepSeq
 import Control.Exception hiding (TypeError)
 import Control.Lens hiding (DefName)
+import Control.Lens.Extras
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Char
@@ -40,7 +41,7 @@ import qualified Type as T
 import qualified Value as V
 
 data AppState = AppState
-    { _typeDefs :: Map.Map TypeDefKey (History TypeDef)
+    { _committedTypeDefs :: Map.Map TypeDefKey (History TypeDef) -- does not contain changes of any current edit
     , _committedExprDefs :: Map.Map ExprDefKey (History ExprDef) -- does not contain changes of any current edit
     , _committedLocations :: History Location -- does not contain selection changes of any current edit
     , _wrappingStyle :: WrappingStyle
@@ -62,7 +63,7 @@ data EditState
     | Naming EditorState
     | AddingTypeConstructorParam ParamIndex EditorState
     | AddingDataConstructor DataConstructorIndex EditorState
-    | AddingDataConstructorParam DataConstructorIndex ParamIndex EditorState (Maybe (AutocompleteList TypeDefKey))
+    | EditingDataConstructor DataConstructorIndex DataConstructor ParamIndex Path EditorState (Maybe (AutocompleteList TypeDefKey))
     | SelectionRenaming EditorState
     | EditingExpr Expr PathsToBeEdited EditorState (Maybe (AutocompleteList Selectable))
 type DataConstructorIndex = Int
@@ -101,7 +102,7 @@ data TypeDefViewSelection
         }
     | DataConstructorSelection
         { _dataConstructorIndex :: Int
-        , _dataConstructorParamIndex :: Maybe Int
+        , _dataConstructorParamSelection :: Maybe (ParamIndex, Path)
         }
     deriving Eq
 data ExprDefViewLocation = ExprDefViewLocation
@@ -151,7 +152,7 @@ readTypeDefs = do
 writeTypeDefs :: AppState -> IO ()
 writeTypeDefs appState = do
     path <- getTypeDefsPath
-    writeFile path $ unlines $ map show $ Map.toList $ view present <$> view typeDefs appState
+    writeFile path $ unlines $ map show $ Map.toList $ view present <$> view committedTypeDefs appState
 
 readExprDefs :: IO (Map.Map TypeDefKey ExprDef)
 readExprDefs = do
@@ -202,7 +203,7 @@ getDefName appState key = case key of
     ExprDefKey k -> getExprName appState k
 
 getTypeName :: AppState -> TypeDefKey -> Name
-getTypeName appState key = fromMaybe "Unnamed" $ view (present . T.typeConstructor . T.typeConstructorName) $ view typeDefs appState Map.! key
+getTypeName appState key = fromMaybe "Unnamed" $ view (T.typeConstructor . T.typeConstructorName) $ getTypeDefs appState Map.! key
 
 getExprName :: AppState -> ExprDefKey -> Name
 getExprName appState key = fromMaybe "unnamed" $ getExprDefs appState Map.! key ^. name
@@ -219,7 +220,7 @@ gray = Vty.rgbColor 128 128 128 -- this shade seems ok on both light and dark ba
 drawTypeDefView :: AppState -> TypeDefViewLocation -> [AppWidget]
 drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
     ui = case (view editState appState, view editorExtent appState) of
-        (AddingDataConstructorParam _ _ _ (Just autocompleteList), Just editorExtent) -> [ autocompleteLayer, mainLayer ] where
+        (EditingDataConstructor _ _ _ _ _ (Just autocompleteList), Just editorExtent) -> [ autocompleteLayer, mainLayer ] where
             autocompleteLayer = renderAutocomplete autocompleteList printItem editorExtent
             printItem = getTypeName appState
         _ -> [ mainLayer ]
@@ -244,16 +245,29 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
     renderedDataConstructors = zipWith renderDataConstructor [0..] dataConstructors
     renderDataConstructor dataConstructorIndex (T.DataConstructor name paramTypes) = highlightIf
         (selection == DataConstructorSelection dataConstructorIndex Nothing)
-        (str name <+> str " " <+> hBox (intersperse (str " ") renderedParamTypes))
+        (snd $ foldl (renderCall $ appState ^. wrappingStyle) (OneWord, str name) renderedParamTypes)
         where
-            renderedParamTypes = zipWith (highlightIf . isSelected) [0..] $ case view editState appState of
-                AddingDataConstructorParam constructorIndex paramIndex editor _ | constructorIndex == dataConstructorIndex ->
-                    insertAt paramIndex (renderExpandingSingleLineEditor editor) $ renderParamType <$> paramTypes
-                _ -> renderParamType <$> paramTypes
-            renderParamType t = str $ inParensIf (isMultiWord t) (printType t)
-            printType = prettyPrintType (getTypeName appState)
-            isSelected paramIndex = selection == DataConstructorSelection dataConstructorIndex (Just paramIndex)
-    T.TypeDef typeConstructor dataConstructors = getPresentTypeDef (view typeDefs appState) typeDefKey
+            renderedParamTypes = zipWith render [0..] paramTypes
+            render paramIndex = renderWithAttrs (view wrappingStyle appState) editorState selectionInType Nothing . renderType appState where
+                selectionInType = case selection of
+                    DataConstructorSelection selectedDataConstructorIndex (Just (selectedParamIndex, selectedPath))
+                        | selectedDataConstructorIndex == dataConstructorIndex && selectedParamIndex == paramIndex ->
+                            ContainsSelection selectedPath
+                    _ -> NoSelection
+            editorState = case view editState appState of
+                EditingDataConstructor _ _ _ _ editor _ -> Just editor
+                _ -> Nothing
+    T.TypeDef typeConstructor dataConstructors = getTypeDefs appState Map.! typeDefKey
+
+renderType :: AppState -> T.Type T.VarName TypeDefKey -> Renderer
+renderType appState t wrappingStyle (RenderChild renderChild) = case t of
+    T.Wildcard -> (OneWord, str "_")
+    T.Var name -> (OneWord, str name)
+    T.Call callee arg ->
+        renderCall wrappingStyle (renderChild 0 $ renderType appState callee) (renderChild 1 $ renderType appState arg)
+    T.Constructor typeDefKey -> (OneWord, str $ getTypeName appState typeDefKey)
+    T.Fn -> (OneWord, str "λ")
+    T.Int -> (OneWord, str "Int")
 
 insertAt :: Int -> a -> [a] -> [a]
 insertAt index item = (!! index) . iterate _tail %~ (item :)
@@ -283,7 +297,11 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
         _ -> renderTitle $ str $ getExprName appState defKey
     coloredExpr = modifyDefAttr (`Vty.withForeColor` gray) renderedExpr -- unselected parts of the expression are gray
     def = getExprDefs appState Map.! defKey
-    renderedExpr = snd $ renderWithAttrs wrappingStyle editState (ContainsSelection selectionPath) maybeTypeError renderer
+    renderedExpr = snd $ renderWithAttrs wrappingStyle editorState (ContainsSelection selectionPath) maybeTypeError renderer
+    editorState = case editState of
+        EditingExpr _ _ editor _ -> Just editor
+        SelectionRenaming editor -> Just editor
+        _ -> Nothing
     renderer = renderExpr appState $ view expr def
     maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
@@ -307,10 +325,9 @@ renderAutocompleteItem isSelected text = color $ padRight Max $ str text where
     white = Vty.rgbColor 255 255 255
     black = Vty.rgbColor 0 0 0
 
-renderWithAttrs :: WrappingStyle -> EditState -> Selection -> Maybe TypeError -> Renderer -> RenderResult
-renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case editState of
-    EditingExpr _ _ editor _ | selected -> renderSelectionEditor editor
-    SelectionRenaming editor | selected -> renderSelectionEditor editor
+renderWithAttrs :: WrappingStyle -> Maybe EditorState -> Selection -> Maybe TypeError -> Renderer -> RenderResult
+renderWithAttrs wrappingStyle maybeEditorState selection maybeTypeError renderer = case maybeEditorState of
+    Just editor | selected -> renderSelectionEditor editor
     _ -> (renderResultType, (if selected then visible . highlight else id) $ makeRedIfNeeded widget)
     where
         selected = selection == ContainsSelection []
@@ -319,7 +336,7 @@ renderWithAttrs wrappingStyle editState selection maybeTypeError renderer = case
         hasError = maybe False Infer.hasErrorAtRoot maybeTypeError
         makeRed = modifyDefAttr $ flip Vty.withForeColor Vty.red
         (renderResultType, widget) = renderer wrappingStyle $ RenderChild renderChild
-        renderChild index = renderWithAttrs wrappingStyle editState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
+        renderChild index = renderWithAttrs wrappingStyle maybeEditorState (getChildSelection selection index) (getChildTypeError maybeTypeError index)
         renderSelectionEditor editor = (OneWord, visible . highlight $ renderExpandingSingleLineEditor editor)
 
 renderExpr :: AppState -> Expr -> Renderer
@@ -339,22 +356,27 @@ renderExpr appState expr wrappingStyle (RenderChild renderChild) = case expr of
                 if argResultType == MultiLine
                 then str "match" <=> indent renderedArg <=> indent renderedCallee
                 else str "match " <+> renderedArg <=> indent renderedCallee
-        _ -> if shouldBeMultiLine then multiLineResult else oneLineResult where
-            shouldBeMultiLine = case wrappingStyle of
-                Parens -> calleeResultType == MultiLine || argResultType == MultiLine
-                NoParens -> calleeResultType == MultiLine || argResultType /= OneWord
-                OneWordPerLine -> True
-            multiLineResult = (MultiLine, renderedCallee <=> indent renderedArg)
-            oneLineResult = (OneLine, renderedCallee <+> str " " <+> withParensIf (argResultType /= OneWord) renderedArg)
+        _ -> renderCall wrappingStyle calleeResult argResult
         where
-            (calleeResultType, renderedCallee) = renderChild 0 (renderExpr appState callee)
-            (argResultType, renderedArg) = renderChild 1 (renderExpr appState arg)
+            calleeResult@(_, renderedCallee) = renderChild 0 $ renderExpr appState callee
+            argResult@(argResultType, renderedArg) = renderChild 1 $ renderExpr appState arg
     E.Constructor key -> (OneWord, str $ view T.constructorName key)
     E.Int n -> (OneWord, str $ show n)
     E.Primitive p -> (OneWord, str $ getDisplayName p)
 
-withParensIf :: Bool -> Widget n -> Widget n
-withParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
+renderCall :: WrappingStyle -> RenderResult -> RenderResult -> RenderResult
+renderCall wrappingStyle (calleeResultType, renderedCallee) (argResultType, renderedArg) =
+    if shouldBeMultiLine then multiLineResult else oneLineResult
+    where
+        shouldBeMultiLine = case wrappingStyle of
+            Parens -> calleeResultType == MultiLine || argResultType == MultiLine
+            NoParens -> calleeResultType == MultiLine || argResultType /= OneWord
+            OneWordPerLine -> True
+        multiLineResult = (MultiLine, renderedCallee <=> indent renderedArg)
+        oneLineResult = (OneLine, renderedCallee <+> str " " <+> inParensIf (argResultType /= OneWord) renderedArg)
+
+inParensIf :: Bool -> Widget n -> Widget n
+inParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 
 renderAlternative :: AppState -> RenderChild -> Int -> Alternative -> RenderResult
 renderAlternative appState (RenderChild renderChild) alternativeIndex (patt, expr) =
@@ -373,7 +395,7 @@ renderPattern patt _ (RenderChild renderChild) = case patt of
         resultType = if null children then OneWord else OneLine
         name = view T.constructorName key
         renderedChildren = addParensIfNeeded <$> zipWith renderChild [0..] childRenderers
-        addParensIfNeeded (resultType, renderedChild) = withParensIf (resultType /= OneWord) renderedChild
+        addParensIfNeeded (resultType, renderedChild) = inParensIf (resultType /= OneWord) renderedChild
         childRenderers = renderPattern <$> children
     P.Int n -> (OneWord, str $ show n)
 
@@ -405,6 +427,20 @@ getTypeAtPathInTypeTree :: Path -> TypeTree -> Maybe (T.Type Infer.TVarId TypeDe
 getTypeAtPathInTypeTree path (Infer.TypeTree t children) = case path of
     [] -> Just t
     index:restOfPath -> getTypeAtPathInTypeTree restOfPath $ children !! index
+
+getItemAtPathInType :: Path -> T.Type v d -> Maybe (T.Type v d)
+getItemAtPathInType path t = case path of
+    [] -> Just t
+    edge:restOfPath -> getChildInType edge t >>= getItemAtPathInType restOfPath
+
+getChildInType :: ChildIndex -> T.Type v d -> Maybe (T.Type v d)
+getChildInType index t = case t of
+    T.Call callee _ | index == 0 -> Just callee
+    T.Call _ arg | index == 1 -> Just arg
+    _ -> Nothing
+
+getChildCountOfType :: T.Type v d -> Int
+getChildCountOfType t = if is T._Call t then 2 else 0
 
 getItemAtPathInExpr :: Path -> Expr -> Maybe Selectable
 getItemAtPathInExpr path expr = getItemAtPathInSelectable path (Expr expr)
@@ -466,10 +502,10 @@ handleEventOnDefListView appState event maybeSelectedDefKey = case event of
         defKeys = getDefKeys appState
         addNewTypeDef = liftIO createNewAppState >>= continue where
             createNewAppState = handleTypeDefsChange $ appState
-                & typeDefs %~ Map.insert newDefKey (History.create $ T.TypeDef (T.TypeConstructor Nothing []) [])
+                & committedTypeDefs %~ Map.insert newDefKey (History.create $ T.TypeDef (T.TypeConstructor Nothing []) [])
                 & committedLocations %~ push newLocation . selectNewDef
             newLocation = TypeDefView $ TypeDefViewLocation newDefKey $ TypeConstructorSelection Nothing
-            newDefKey = createNewDefKey $ view typeDefs appState
+            newDefKey = createNewDefKey $ view committedTypeDefs appState
             selectNewDef = present . _DefListView ?~ TypeDefKey newDefKey
         addNewExprDef = liftIO createNewAppState >>= continue where
             createNewAppState = handleExprDefsChange $ appState
@@ -484,7 +520,7 @@ getDefKeys :: AppState -> [DefKey]
 getDefKeys appState = (TypeDefKey <$> getTypeDefKeys appState) ++ (ExprDefKey <$> getExprDefKeys appState)
 
 getTypeDefKeys :: AppState -> [TypeDefKey]
-getTypeDefKeys = Map.keys . view typeDefs
+getTypeDefKeys = Map.keys . view committedTypeDefs
 
 getExprDefKeys :: AppState -> [ExprDefKey]
 getExprDefKeys = Map.keys . view committedExprDefs
@@ -509,11 +545,15 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
             TypeConstructorSelection Nothing -> initiateAddTypeConstructorParam appState typeConstructorParamCount
             TypeConstructorSelection (Just paramIndex) -> initiateAddTypeConstructorParam appState $ paramIndex + 1
             DataConstructorSelection dataConstructorIndex Nothing ->
-                initiateAddParamToDataConstructor appState dataConstructorIndex 0
-            DataConstructorSelection dataConstructorIndex (Just paramIndex) ->
-                initiateAddParamToDataConstructor appState dataConstructorIndex (paramIndex + 1)
+                initiateAddParamToDataConstructor dataConstructorIndex 0
+            DataConstructorSelection dataConstructorIndex (Just (paramIndex, _)) ->
+                initiateAddParamToDataConstructor dataConstructorIndex (paramIndex + 1)
+        Vty.EvKey (Vty.KChar ')') [] -> initiateCallSelected
+        Vty.EvKey (Vty.KChar '(') [] -> initiateApplyFnToSelected
         Vty.EvKey (Vty.KChar 'u') [] -> undo
         Vty.EvKey (Vty.KChar 'r') [] -> redo
+        Vty.EvKey (Vty.KChar '\t') [] -> switchToNextWrappingStyle appState
+        Vty.EvKey Vty.KBackTab [] -> switchToPrevWrappingStyle appState
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     Naming editor -> case event of
@@ -528,23 +568,23 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey index (head $ getEditContents editor)
         _ -> handleEditorEvent event editor >>= setEditState appState . AddingDataConstructor index
-    AddingDataConstructorParam dataConstructorIndex paramIndex editor maybeAutocompleteList -> case event of
+    EditingDataConstructor dataConstructorIndex dataConstructor paramIndex path editor maybeAutocompleteList -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey (Vty.KChar '\t') [] -> case maybeAutocompleteList >>= ListWidget.listSelectedElement of
             Just (_, selectedDefKey) ->
-                commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex $ T.Constructor selectedDefKey
+                commit $ T.Constructor selectedDefKey
             Nothing -> continue appState
         Vty.EvKey Vty.KEnter []
             | editorContent == "" || editorContent == "_" ->
-                commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Wildcard
+                commit T.Wildcard
             | isValidTypeVarName editorContent ->
-                commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex (T.Var editorContent)
+                commit (T.Var editorContent)
             | otherwise -> continue appState
         _ -> do
             newEditor <- handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
             if newEditorContent == "λ" || newEditorContent == "\\"
-            then commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex T.Fn
+            then commit T.Fn
             else do
                 let editorContentChanged = newEditorContent /= editorContent
                 let isMatch typeDefKey = getTypeName appState typeDefKey `containsIgnoringCase` newEditorContent
@@ -553,11 +593,15 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                     Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
                     _ | null items -> pure Nothing
                     _ -> pure $ Just $ ListWidget.list AutocompleteName items 1
-                setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex newEditor newAutocompleteList
-        where editorContent = head $ getEditContents editor
+                setEditState appState $
+                    EditingDataConstructor dataConstructorIndex dataConstructor paramIndex path newEditor newAutocompleteList
+        where
+            editorContent = head $ getEditContents editor
+            commit = commitDataConstructorEdit appState typeDefKey dataConstructorIndex dataConstructor paramIndex path
     _ -> continue appState
     where
-        typeDefKeys = Map.keys $ appState ^. typeDefs
+        currentTypeDefs = getTypeDefs appState
+        typeDefKeys = getTypeDefKeys appState
         navBackward = setSelection $ case selection of
             TypeConstructorSelection Nothing -> TypeConstructorSelection Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection $ Just $ max (paramIndex - 1) 0
@@ -565,8 +609,12 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                 if dataConstructorIndex > 0
                 then DataConstructorSelection (dataConstructorIndex - 1) Nothing
                 else TypeConstructorSelection Nothing
-            DataConstructorSelection dataConstructorIndex (Just paramIndex) ->
-                DataConstructorSelection dataConstructorIndex $ Just $ max (paramIndex - 1) 0
+            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
+                DataConstructorSelection dataConstructorIndex $ Just $ case viewR path of
+                    Nothing -> (max (paramIndex - 1) 0, [])
+                    Just (parentPath, childIndex) -> (paramIndex, parentPath ++ [(childIndex + 1) `mod` siblingCount]) where
+                        siblingCount = getChildCountAtPath parentPath param
+                        param = getParam dataConstructorIndex paramIndex
         navForward = setSelection $ case selection of
             TypeConstructorSelection Nothing ->
                 if dataConstructorCount > 0
@@ -576,22 +624,38 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                 TypeConstructorSelection $ Just $ min (paramIndex + 1) (typeConstructorParamCount - 1)
             DataConstructorSelection dataConstructorIndex Nothing ->
                 DataConstructorSelection (min (dataConstructorIndex + 1) (dataConstructorCount - 1)) Nothing
-            DataConstructorSelection dataConstructorIndex (Just paramIndex) ->
-                DataConstructorSelection dataConstructorIndex $ Just $ min (paramIndex + 1) (paramCount - 1) where
-                    paramCount = length $ dataConstructors ^. ix dataConstructorIndex . T.dataConstructorParamTypes
+            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
+                DataConstructorSelection dataConstructorIndex $ Just $ case viewR path of
+                    Nothing -> (min (paramIndex + 1) (paramCount - 1), []) where
+                        paramCount = length $ dataConstructors ^. ix dataConstructorIndex . T.dataConstructorParamTypes
+                    Just (parentPath, childIndex) -> (paramIndex, parentPath ++ [(childIndex - 1) `mod` siblingCount]) where
+                        siblingCount = getChildCountAtPath parentPath param
+                        param = getParam dataConstructorIndex paramIndex
         navToParent = setSelection $ case selection of
             TypeConstructorSelection _ -> TypeConstructorSelection Nothing
-            DataConstructorSelection index _ -> DataConstructorSelection index Nothing
+            DataConstructorSelection dataConstructorIndex Nothing -> DataConstructorSelection dataConstructorIndex Nothing
+            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
+                DataConstructorSelection dataConstructorIndex $ case initMay path of
+                    Nothing -> Nothing
+                    Just parentPath -> Just (paramIndex, parentPath)
         navToChild = setSelection $ case selection of
             TypeConstructorSelection Nothing ->
                 TypeConstructorSelection $ if typeConstructorParamCount > 0 then Just 0 else Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection (Just paramIndex)
-            DataConstructorSelection index Nothing -> DataConstructorSelection index (Just 0)
-            DataConstructorSelection index (Just paramIndex) -> DataConstructorSelection index (Just paramIndex)
+            DataConstructorSelection dataConstructorIndex Nothing ->
+                DataConstructorSelection dataConstructorIndex (Just (0, []))
+            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
+                DataConstructorSelection dataConstructorIndex $ Just (paramIndex, newPath) where
+                    newPath = if getChildCountAtPath path param > 0 then path ++ [0] else path
+                    param = getParam dataConstructorIndex paramIndex
+        getChildCountAtPath path t = getChildCountOfType parent where
+            parent = fromJustNote "current path invalid" $ getItemAtPathInType path t
+        getParam dataConstructorIndex paramIndex =
+            (dataConstructors !! dataConstructorIndex ^. T.dataConstructorParamTypes) !! paramIndex
         setSelection newSelection = continue $ appState
             & committedLocations . present . _TypeDefView . typeDefViewSelection .~ newSelection
         typeConstructorParamCount = length typeConstructorParams
-        typeConstructorParams = appState ^. typeDefs . ix typeDefKey . present . T.typeConstructor . T.typeConstructorParams
+        typeConstructorParams = currentTypeDefs ^. ix typeDefKey . T.typeConstructor . T.typeConstructorParams
         dataConstructorCount = length dataConstructors
         dataConstructors = getDataConstructors appState typeDefKey
         initiateAddDataConstructorBelowSelection = initiateAddDataConstructor appState $ case selection of
@@ -600,25 +664,45 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         initiateAddDataConstructorAboveSelection = initiateAddDataConstructor appState $ case selection of
             TypeConstructorSelection _ -> 0
             DataConstructorSelection index _ -> index
+        initiateAddParamToDataConstructor dataConstructorIndex paramIndex =
+            setEditState appState $ EditingDataConstructor dataConstructorIndex dataConstructor paramIndex [] emptyEditor Nothing where
+                dataConstructor = dataConstructors !! dataConstructorIndex & T.dataConstructorParamTypes %~ insertAt paramIndex T.Wildcard
+        initiateCallSelected = initiateModification (`T.Call` T.Wildcard) [1]
+        initiateApplyFnToSelected = initiateModification (T.Wildcard `T.Call`) [0]
+        initiateModification modify pathWithinSelection = continue $ case selection of
+            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
+                appState & editState .~
+                    EditingDataConstructor dataConstructorIndex dataConstructor paramIndex newPath emptyEditor Nothing where
+                        newPath = path ++ pathWithinSelection
+                        dataConstructor = dataConstructors !! dataConstructorIndex
+                            & T.dataConstructorParamTypes . ix paramIndex %~ modifyAtPathInType path modify
+            _ -> appState
         undo = modifyTypeDefs appState $ ix typeDefKey %~ goBack
         redo = modifyTypeDefs appState $ ix typeDefKey %~ goForward
 
-initiateAddParamToDataConstructor :: AppState -> Int -> Int -> EventM AppResourceName (Next AppState)
-initiateAddParamToDataConstructor appState dataConstructorIndex paramIndex =
-    setEditState appState $ AddingDataConstructorParam dataConstructorIndex paramIndex emptyEditor Nothing
-
-commitAddParamToDataConstructor :: AppState -> TypeDefKey -> Int -> Int -> T.Type T.VarName TypeDefKey -> EventM AppResourceName (Next AppState)
-commitAddParamToDataConstructor appState typeDefKey dataConstructorIndex paramIndex t = appState
+commitDataConstructorEdit ::
+    AppState
+    -> TypeDefKey
+    -> Int
+    -> DataConstructor
+    -> Int
+    -> Path
+    -> T.Type T.VarName TypeDefKey
+    -> EventM AppResourceName (Next AppState)
+commitDataConstructorEdit appState typeDefKey dataConstructorIndex dataConstructor paramIndex path t = appState
     & editState .~ NotEditing
-    & committedLocations . present . _TypeDefView . typeDefViewSelection . dataConstructorParamIndex ?~ paramIndex
-    & modifyTypeDef typeDefKey
-        (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes %~ insertAt paramIndex t)
+    & committedLocations . present . _TypeDefView . typeDefViewSelection . dataConstructorParamSelection
+        ?~ (paramIndex, path)
+    & modifyTypeDef typeDefKey (T.dataConstructors . ix dataConstructorIndex .~ newDataConstructor)
+    where
+        newDataConstructor = dataConstructor
+            & T.dataConstructorParamTypes . ix paramIndex %~ modifyAtPathInType path (const t)
 
 emptyEditor :: Editor String AppResourceName
 emptyEditor = editor EditorName (Just 1) ""
 
 getDataConstructors :: AppState -> TypeDefKey -> [DataConstructor]
-getDataConstructors appState typeDefKey = view (typeDefs . ix typeDefKey . present . T.dataConstructors) appState
+getDataConstructors appState typeDefKey = getTypeDefs appState ^. ix typeDefKey . T.dataConstructors
 
 setEditState :: AppState -> EditState -> EventM AppResourceName (Next AppState)
 setEditState appState newEditState = continue $ appState & editState .~ newEditState
@@ -626,6 +710,9 @@ setEditState appState newEditState = continue $ appState & editState .~ newEditS
 containsIgnoringCase :: String -> String -> Bool
 containsIgnoringCase s1 s2 = map toLower s2 `isInfixOf` map toLower s1
 
+handleEditorEventIgnoringAutocompleteControls :: Vty.Event
+    -> Editor String AppResourceName
+    -> EventM AppResourceName (Editor String AppResourceName)
 handleEditorEventIgnoringAutocompleteControls event editor = case event of
     -- ignore up/down as they are used to control the autocomplete
     Vty.EvKey Vty.KUp [] -> pure editor
@@ -673,12 +760,12 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                     constructorKeys = typeDefKeys >>= getConstructorKeys
                     getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
                     getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
-                    getConstructors = view T.dataConstructors . getPresentTypeDef currentCustomTypeDefs
+                    getConstructors typeDefKey = view T.dataConstructors $ currentTypeDefs Map.! typeDefKey
                 Pattern _ -> map Pattern constructorPatterns where
                     constructorPatterns = do
                         typeDefKey <- typeDefKeys
                         T.DataConstructor constructorName paramTypes <-
-                            view T.dataConstructors $ getPresentTypeDef currentCustomTypeDefs typeDefKey
+                            view T.dataConstructors $ currentTypeDefs Map.! typeDefKey
                         let constructorKey = T.DataConstructorKey typeDefKey constructorName
                         let arity = length paramTypes
                         let wildcards = replicate arity P.Wildcard
@@ -705,8 +792,8 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         Vty.EvKey (Vty.KChar '\\') [] -> wrapSelectedInFn
         Vty.EvKey (Vty.KChar '|') [] -> addAlternativeToSelected
         Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
-        Vty.EvKey (Vty.KChar '\t') [] -> switchToNextWrappingStyle
-        Vty.EvKey Vty.KBackTab [] -> switchToPrevWrappingStyle
+        Vty.EvKey (Vty.KChar '\t') [] -> switchToNextWrappingStyle appState
+        Vty.EvKey Vty.KBackTab [] -> switchToPrevWrappingStyle appState
         Vty.EvKey (Vty.KChar 'c') [] -> copy
         Vty.EvKey (Vty.KChar 'p') [] -> paste
         Vty.EvKey (Vty.KChar 'u') [] -> undo
@@ -715,7 +802,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         _ -> continue appState
     _ -> error "invalid state"
     where
-        currentCustomTypeDefs = view typeDefs appState
+        currentTypeDefs = getTypeDefs appState
         currentExprDefs = getExprDefs appState
         exprDefKeys = Map.keys currentExprDefs
         getCurrentExprName = getExprName appState
@@ -823,11 +910,6 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 _ -> continue appState
             Nothing -> continue appState
         setExpr newExpr = modifyExprDef defKey (expr .~ newExpr) (appState & editState .~ NotEditing)
-        switchToNextWrappingStyle = modifyWrappingStyle getNext
-        switchToPrevWrappingStyle = modifyWrappingStyle getPrev
-        modifyWrappingStyle modify = continue $ appState & wrappingStyle %~ modify
-        getNext current = if current == maxBound then minBound else succ current
-        getPrev current = if current == minBound then maxBound else pred current
         copy = continue $ appState & clipboard %~ case selected of
             Expr e -> clipboardExpr ?~ e
             Pattern p -> clipboardPattern ?~ p
@@ -841,6 +923,21 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 & committedLocations . present . _ExprDefView . exprDefViewSelection %~ modifySelectionPath
             newDefHistory = modify $ view committedExprDefs appState Map.! defKey
             modifySelectionPath = maybe id const $ getDiffPathBetweenExprs (view expr def) $ view (present . expr) newDefHistory
+
+switchToNextWrappingStyle :: AppState -> EventM AppResourceName (Next AppState)
+switchToNextWrappingStyle = modifyWrappingStyle getNext
+
+switchToPrevWrappingStyle :: AppState -> EventM AppResourceName (Next AppState)
+switchToPrevWrappingStyle = modifyWrappingStyle getPrev
+
+modifyWrappingStyle :: (WrappingStyle -> WrappingStyle) -> AppState -> EventM AppResourceName (Next AppState)
+modifyWrappingStyle modify appState = continue $ appState & wrappingStyle %~ modify
+
+getNext :: (Eq a, Bounded a, Enum a) => a -> a
+getNext current = if current == maxBound then minBound else succ current
+
+getPrev :: (Eq a, Bounded a, Enum a) => a -> a
+getPrev current = if current == minBound then maxBound else pred current
 
 getWildcardPaths :: Pattern -> [Path]
 getWildcardPaths patt = case patt of
@@ -893,7 +990,7 @@ initiateRenameDefinition appState = continue $ appState & editState .~ Naming in
 
 getCurrentDefName :: AppState -> Maybe Name
 getCurrentDefName appState = case getLocation appState of
-    TypeDefView loc -> join $ preview (typeDefs . ix (view typeDefKey loc) . present . T.typeConstructor . T.typeConstructorName) appState
+    TypeDefView loc -> join $ preview (ix (view typeDefKey loc) . T.typeConstructor . T.typeConstructorName) (getTypeDefs appState)
     ExprDefView loc -> join $ preview (ix (view exprDefKey loc) . name) (getExprDefs appState)
     _ -> Nothing
 
@@ -939,7 +1036,7 @@ commitAddDataConstructor appState typeDefKey index name =
     else continue appState
 
 modifyTypeDefs :: AppState -> (Map.Map TypeDefKey (History TypeDef) -> Map.Map TypeDefKey (History TypeDef)) -> EventM AppResourceName (Next AppState)
-modifyTypeDefs appState modify = liftIO (handleTypeDefsChange $ appState & typeDefs %~ modify) >>= continue
+modifyTypeDefs appState modify = liftIO (handleTypeDefsChange $ appState & committedTypeDefs %~ modify) >>= continue
 
 modifyExprDefs :: AppState -> (Map.Map ExprDefKey (History ExprDef) -> Map.Map ExprDefKey (History ExprDef)) -> EventM AppResourceName (Next AppState)
 modifyExprDefs appState modify = liftIO (handleExprDefsChange $ appState & committedExprDefs %~ modify) >>= continue
@@ -977,6 +1074,15 @@ getVars (P.Var name) = [name]
 getVars (P.Constructor _ children) = children >>= getVars
 getVars _ = []
 
+modifyAtPathInType :: Path -> (T.Type v d -> T.Type v d) -> T.Type v d -> T.Type v d
+modifyAtPathInType path modify t = case path of
+    [] -> modify t
+    edge:restOfPath -> case t of
+        T.Call callee arg
+            | edge == 0 -> T.Call (modifyAtPathInType restOfPath modify callee) arg
+            | edge == 1 -> T.Call callee (modifyAtPathInType restOfPath modify arg)
+        _ -> error "invalid path"
+
 modifyAtPathInExpr :: Path -> (E.Expr d c -> E.Expr d c) -> (P.Pattern c -> P.Pattern c) -> E.Expr d c -> E.Expr d c
 modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
     [] -> modifyExpr expr
@@ -986,10 +1092,9 @@ modifyAtPathInExpr path modifyExpr modifyPattern expr = case path of
                 if even edge
                 then (modifyAtPathInPattern restOfPath modifyPattern patt, expr)
                 else (patt, modifyAtPathInExpr restOfPath modifyExpr modifyPattern expr)
-        E.Call callee arg | edge == 0 ->
-            E.Call (modifyAtPathInExpr restOfPath modifyExpr modifyPattern callee) arg
-        E.Call callee arg | edge == 1 ->
-            E.Call callee (modifyAtPathInExpr restOfPath modifyExpr modifyPattern arg)
+        E.Call callee arg
+            | edge == 0 -> E.Call (modifyAtPathInExpr restOfPath modifyExpr modifyPattern callee) arg
+            | edge == 1 -> E.Call callee (modifyAtPathInExpr restOfPath modifyExpr modifyPattern arg)
         _ -> error "invalid path"
 
 modifyAtPathInPattern :: Path -> (P.Pattern t -> P.Pattern t) -> P.Pattern t -> P.Pattern t
@@ -1031,7 +1136,7 @@ handleExprDefsChange appState = do
 
 updateDerivedState :: AppState -> IO AppState
 updateDerivedState appState = do
-    let getTypeDef = getPresentTypeDef $ view typeDefs appState
+    let getTypeDef = (getTypeDefs appState Map.!)
     let exprs = getExprs appState
     let location = getLocation appState
     maybeDerivedState <- traverse (createDerivedState getTypeDef exprs) (preview _ExprDefView location)
@@ -1047,6 +1152,16 @@ updateEvalResult appState = do
 getExprs :: AppState -> Map.Map ExprDefKey Expr
 getExprs appState = view expr <$> getExprDefs appState
 
+getTypeDefs :: AppState -> Map.Map TypeDefKey TypeDef
+getTypeDefs appState = case (appState ^. editState, getLocation appState) of
+    (EditingDataConstructor dataConstructorIndex dataConstructor _ _ _ _, TypeDefView loc) -> committedDefs
+        & ix (view typeDefKey loc)
+        . T.dataConstructors
+        . ix dataConstructorIndex
+        .~ dataConstructor
+    _ -> committedDefs
+    where committedDefs = view present <$> appState ^. committedTypeDefs
+
 getExprDefs :: AppState -> Map.Map ExprDefKey ExprDef
 getExprDefs appState = case (appState ^. editState, getLocation appState) of
     (EditingExpr e _ _ _, ExprDefView loc) -> committedDefs & ix (view exprDefKey loc) %~ expr .~ e
@@ -1055,8 +1170,8 @@ getExprDefs appState = case (appState ^. editState, getLocation appState) of
 
 getLocation :: AppState -> Location
 getLocation appState = case appState ^. editState of
-    AddingDataConstructorParam dataConstructorIndex paramIndex _ _ ->
-        committedLocation & _TypeDefView . typeDefViewSelection .~ DataConstructorSelection dataConstructorIndex (Just paramIndex)
+    EditingDataConstructor dataConstructorIndex _ paramIndex path _ _ ->
+        committedLocation & _TypeDefView . typeDefViewSelection .~ DataConstructorSelection dataConstructorIndex (Just (paramIndex, path))
     EditingExpr _ path _ _ -> committedLocation & _ExprDefView . exprDefViewSelection .~ NonEmpty.head path
     _ -> committedLocation
     where committedLocation = appState ^. committedLocations . present
@@ -1067,9 +1182,6 @@ createDerivedState getTypeDef defs location =
 
 createInferResult :: (TypeDefKey -> TypeDef) -> Map.Map ExprDefKey Expr -> ExprDefKey -> InferResult
 createInferResult getTypeDef defs defKey = Infer.inferType (T.getDataConstructorType getTypeDef) defs $ defs Map.! defKey
-
-getPresentTypeDef :: Map.Map TypeDefKey (History TypeDef) -> TypeDefKey -> TypeDef
-getPresentTypeDef typeDefs key = typeDefs Map.! key ^. present
 
 createEvalResult :: Map.Map ExprDefKey Expr -> ExprDefViewLocation -> IO EvalResult
 createEvalResult exprs (ExprDefViewLocation defKey selectionPath) = do

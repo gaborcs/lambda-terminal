@@ -9,6 +9,3 @@ removeItemAtIndex :: Int -> [a] -> [a]
 removeItemAtIndex index xs = case xs of
     [] -> []
     x:xs' -> if index == 0 then xs' else x : removeItemAtIndex (index - 1) xs'
-
-inParensIf :: Bool -> String -> String
-inParensIf cond s = if cond then "(" ++ s ++ ")" else s

@@ -1,6 +1,5 @@
 module PrettyPrintValue (prettyPrintValue) where
 
-import Util
 import qualified Value as V
 
 prettyPrintValue :: (c -> String) -> V.Value c -> Maybe String
@@ -12,6 +11,9 @@ prettyPrintValue getName value = case value of
         printedChildren <- traverse printChild children
         return $ unwords $ getName key : printedChildren
     V.Int n -> Just $ show n
+
+inParensIf :: Bool -> String -> String
+inParensIf cond s = if cond then "(" ++ s ++ ")" else s
 
 isMultiWord :: V.Value c -> Bool
 isMultiWord value = case value of
