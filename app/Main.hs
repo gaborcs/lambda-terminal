@@ -541,13 +541,8 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar 'k') [] -> navToChild
         Vty.EvKey (Vty.KChar 'o') [] -> initiateAddDataConstructorBelowSelection
         Vty.EvKey (Vty.KChar 'O') [] -> initiateAddDataConstructorAboveSelection
-        Vty.EvKey (Vty.KChar ' ') [] -> case selection of
-            TypeConstructorSelection Nothing -> initiateAddTypeConstructorParam appState typeConstructorParamCount
-            TypeConstructorSelection (Just paramIndex) -> initiateAddTypeConstructorParam appState $ paramIndex + 1
-            DataConstructorSelection dataConstructorIndex Nothing ->
-                initiateAddParamToDataConstructor dataConstructorIndex 0
-            DataConstructorSelection dataConstructorIndex (Just (paramIndex, _)) ->
-                initiateAddParamToDataConstructor dataConstructorIndex (paramIndex + 1)
+        Vty.EvKey (Vty.KChar '<') [] -> initiateAddParamBeforeSelection
+        Vty.EvKey (Vty.KChar '>') [] -> initiateAddParamAfterSelection
         Vty.EvKey (Vty.KChar ')') [] -> initiateCallSelected
         Vty.EvKey (Vty.KChar '(') [] -> initiateApplyFnToSelected
         Vty.EvKey (Vty.KChar 'u') [] -> undo
@@ -664,6 +659,21 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         initiateAddDataConstructorAboveSelection = initiateAddDataConstructor appState $ case selection of
             TypeConstructorSelection _ -> 0
             DataConstructorSelection index _ -> index
+        initiateAddParamBeforeSelection = case selection of
+            TypeConstructorSelection Nothing -> initiateAddTypeConstructorParam appState 0
+            TypeConstructorSelection (Just paramIndex) -> initiateAddTypeConstructorParam appState paramIndex
+            DataConstructorSelection dataConstructorIndex Nothing ->
+                initiateAddParamToDataConstructor dataConstructorIndex 0
+            DataConstructorSelection dataConstructorIndex (Just (paramIndex, _)) ->
+                initiateAddParamToDataConstructor dataConstructorIndex paramIndex
+        initiateAddParamAfterSelection = case selection of
+            TypeConstructorSelection Nothing -> initiateAddTypeConstructorParam appState typeConstructorParamCount
+            TypeConstructorSelection (Just paramIndex) -> initiateAddTypeConstructorParam appState $ paramIndex + 1
+            DataConstructorSelection dataConstructorIndex Nothing ->
+                initiateAddParamToDataConstructor dataConstructorIndex paramCount where
+                    paramCount = length $ dataConstructors !! dataConstructorIndex ^. T.dataConstructorParamTypes
+            DataConstructorSelection dataConstructorIndex (Just (paramIndex, _)) ->
+                initiateAddParamToDataConstructor dataConstructorIndex $ paramIndex + 1
         initiateAddParamToDataConstructor dataConstructorIndex paramIndex =
             setEditState appState $ EditingDataConstructor dataConstructorIndex dataConstructor paramIndex [] emptyEditor Nothing where
                 dataConstructor = dataConstructors !! dataConstructorIndex & T.dataConstructorParamTypes %~ insertAt paramIndex T.Wildcard
