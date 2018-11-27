@@ -549,6 +549,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar '>') [] -> initiateAddParamAfterSelection
         Vty.EvKey (Vty.KChar ')') [] -> initiateCallSelected
         Vty.EvKey (Vty.KChar '(') [] -> initiateApplyFnToSelected
+        Vty.EvKey (Vty.KChar 'd') [] -> deleteSelected
         Vty.EvKey (Vty.KChar 'c') [] -> copy
         Vty.EvKey (Vty.KChar 'p') [] -> paste
         Vty.EvKey (Vty.KChar 'u') [] -> undo
@@ -687,6 +688,16 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                         dataConstructor = dataConstructors !! dataConstructorIndex
                             & T.dataConstructorParamTypes . ix paramIndex %~ modifyAtPathInType path modify
             _ -> appState
+        deleteSelected = case selection of
+            TypeConstructorSelection (Just paramIndex) -> appState
+                & committedLocations . present . _TypeDefView . typeDefViewSelection .~ newSelection
+                & modifyTypeDef typeDefKey (T.typeConstructor . T.typeConstructorParams %~ removeItemAtIndex paramIndex)
+                where
+                    newSelection = TypeConstructorSelection $
+                        if typeConstructorParamCount == 1
+                            then Nothing
+                            else Just $ min paramIndex (typeConstructorParamCount - 2)
+            _ -> continue appState
         copy = continue $ appState & clipboard %~ case selection of
             TypeConstructorSelection Nothing -> clipboardTypeConstructor ?~ def ^. T.typeConstructor
             TypeConstructorSelection (Just paramIndex) ->
