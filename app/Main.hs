@@ -705,10 +705,24 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                         if dataConstructorCount == 1
                             then TypeConstructorSelection Nothing
                             else DataConstructorSelection (min dataConstructorIndex (dataConstructorCount - 2)) []
-            DataConstructorSelection dataConstructorIndex (paramIndex : pathInParam) -> appState
-                & modifyTypeDef typeDefKey
-                    (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes . ix paramIndex
-                    %~ modifyAtPathInType pathInParam (const T.Wildcard))
+            DataConstructorSelection dataConstructorIndex (paramIndex : pathInParam) ->
+                case dataConstructors ^? ix dataConstructorIndex . T.dataConstructorParamTypes . ix paramIndex of
+                    Just T.Wildcard -> appState
+                        & committedLocations . present . _TypeDefView . typeDefViewSelection .~ newSelection
+                        & modifyTypeDef typeDefKey
+                            (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes
+                            %~ removeItemAtIndex paramIndex)
+                        where
+                            newSelection = DataConstructorSelection dataConstructorIndex $
+                                if dataConstructorParamCount == 1
+                                    then []
+                                    else [min paramIndex (dataConstructorParamCount - 2)]
+                            dataConstructorParamCount =
+                                length $ dataConstructors ^. ix dataConstructorIndex . T.dataConstructorParamTypes
+                    _ -> appState
+                        & modifyTypeDef typeDefKey
+                            (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes . ix paramIndex
+                            %~ modifyAtPathInType pathInParam (const T.Wildcard))
             _ -> continue appState
         copy = continue $ appState & clipboard %~ case selection of
             TypeConstructorSelection Nothing -> clipboardTypeConstructor ?~ def ^. T.typeConstructor
