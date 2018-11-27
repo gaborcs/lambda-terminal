@@ -55,7 +55,10 @@ data ExprDef = ExprDef
     , _expr :: Expr
     } deriving (Read, Show)
 data Clipboard = Clipboard
-    { _clipboardExpr :: Maybe Expr
+    { _clipboardTypeConstructor :: Maybe T.TypeConstructor
+    , _clipboardDataConstructor :: Maybe DataConstructor
+    , _clipboardType :: Maybe (T.Type T.VarName TypeDefKey)
+    , _clipboardExpr :: Maybe Expr
     , _clipboardPattern :: Maybe Pattern
     }
 data EditState
@@ -139,7 +142,7 @@ getInitialState = do
     readExprDefsResult <- tryJust (guard . isDoesNotExistError) readExprDefs
     let typeDefs = either (const Map.empty) (Map.map History.create) readTypeDefsResult
     let exprDefs = either (const Map.empty) (Map.map History.create) readExprDefsResult
-    let clipboard = Clipboard Nothing Nothing
+    let clipboard = Clipboard Nothing Nothing Nothing Nothing Nothing
     let defKeys = (TypeDefKey <$> Map.keys typeDefs) ++ (ExprDefKey <$> Map.keys exprDefs)
     let locationHistory = History.create $ DefListView $ listToMaybe defKeys
     return $ AppState typeDefs exprDefs locationHistory NoParens clipboard NotEditing Nothing Nothing
@@ -546,6 +549,8 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar '>') [] -> initiateAddParamAfterSelection
         Vty.EvKey (Vty.KChar ')') [] -> initiateCallSelected
         Vty.EvKey (Vty.KChar '(') [] -> initiateApplyFnToSelected
+        Vty.EvKey (Vty.KChar 'c') [] -> copy
+        Vty.EvKey (Vty.KChar 'p') [] -> paste
         Vty.EvKey (Vty.KChar 'u') [] -> undo
         Vty.EvKey (Vty.KChar 'r') [] -> redo
         Vty.EvKey (Vty.KChar '\t') [] -> switchToNextWrappingStyle appState
@@ -682,6 +687,32 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                         dataConstructor = dataConstructors !! dataConstructorIndex
                             & T.dataConstructorParamTypes . ix paramIndex %~ modifyAtPathInType path modify
             _ -> appState
+        copy = continue $ appState & clipboard %~ case selection of
+            TypeConstructorSelection Nothing -> clipboardTypeConstructor ?~ def ^. T.typeConstructor
+            TypeConstructorSelection (Just paramIndex) ->
+                clipboardType .~ (T.Var <$> (def ^? T.typeConstructor . T.typeConstructorParams . ix paramIndex))
+            DataConstructorSelection dataConstructorIndex [] ->
+                clipboardDataConstructor .~ dataConstructors ^? ix dataConstructorIndex
+            DataConstructorSelection dataConstructorIndex (paramIndex : pathInParam) ->
+                clipboardType .~ (maybeParam >>= getItemAtPathInType pathInParam) where
+                    maybeParam = dataConstructors ^? ix dataConstructorIndex . T.dataConstructorParamTypes . ix paramIndex
+        paste = case selection of
+            TypeConstructorSelection Nothing -> case appState ^. clipboard . clipboardTypeConstructor of
+                Just c -> modifyTypeDef typeDefKey (T.typeConstructor .~ c) appState
+                Nothing -> continue appState
+            TypeConstructorSelection (Just paramIndex) -> case appState ^. clipboard . clipboardType of
+                Just (T.Var v) ->
+                    modifyTypeDef typeDefKey (T.typeConstructor . T.typeConstructorParams . ix paramIndex .~ v) appState
+                _ -> continue appState
+            DataConstructorSelection dataConstructorIndex [] -> case appState ^. clipboard . clipboardDataConstructor of
+                Just c -> modifyTypeDef typeDefKey (T.dataConstructors . ix dataConstructorIndex .~ c) appState
+                Nothing -> continue appState
+            DataConstructorSelection dataConstructorIndex (paramIndex : pathInParam) -> case appState ^. clipboard . clipboardType of
+                Just t -> modifyTypeDef typeDefKey
+                    (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes . ix paramIndex
+                        %~ modifyAtPathInType pathInParam (const t))
+                    appState
+                Nothing -> continue appState
         undo = modifyDefHistory goBack
         redo = modifyDefHistory goForward
         modifyDefHistory modify = liftIO createAppState >>= continue where
@@ -829,7 +860,6 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         exprDefKeys = Map.keys currentExprDefs
         getCurrentExprName = getExprName appState
         def = currentExprDefs Map.! defKey
-        currentClipboard = view clipboard appState
         currentEditState = view editState appState
         navToParent = nav parentPath
         navToChild = nav pathToFirstChildOfSelected
@@ -935,8 +965,9 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         copy = continue $ appState & clipboard %~ case selected of
             Expr e -> clipboardExpr ?~ e
             Pattern p -> clipboardPattern ?~ p
-        paste = setExpr $ modifySelected (maybe id const exprClipboard) (maybe id const patternClipboard)
-        Clipboard exprClipboard patternClipboard = currentClipboard
+        paste = setExpr $ modifySelected
+            (maybe id const $ appState ^. clipboard . clipboardExpr)
+            (maybe id const $ appState ^. clipboard . clipboardPattern)
         undo = modifyDefHistory goBack
         redo = modifyDefHistory goForward
         modifyDefHistory modify = liftIO createAppState >>= continue where
