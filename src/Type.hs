@@ -48,6 +48,20 @@ makeLenses ''DataConstructorKey
 fn :: Type v d -> Type v d -> Type v d
 fn = Call . Call Fn
 
+getTypeVars :: Eq v => Type v d -> [v]
+getTypeVars t = case t of
+    Wildcard -> []
+    Var var -> [var]
+    Call a b -> getTypeVars a `union` getTypeVars b
+    Constructor _ -> []
+    Fn -> []
+    Int -> []
+
+getTypeVarsInTypeDef :: TypeDef d -> [VarName]
+getTypeVarsInTypeDef def = nub $
+    (def ^. typeConstructor . typeConstructorParams)
+    ++ (def ^. dataConstructors >>= view dataConstructorParamTypes >>= getTypeVars)
+
 getDataConstructorType :: (d -> TypeDef d) -> DataConstructorKey d -> Maybe (Type VarName d)
 getDataConstructorType getTypeDef (DataConstructorKey typeDefKey constructorName) = foldr fn resultType <$> maybeParamTypes where
     TypeDef typeConstructor dataConstructors = getTypeDef typeDefKey

@@ -6,7 +6,6 @@ import Primitive
 import Control.Lens
 import Control.Lens.Extras
 import Control.Monad.State
-import qualified Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Expr as E
@@ -136,7 +135,7 @@ freshTVar = do
 
 instantiate :: Ord v => T.Type v d -> Infer (T.Type TVarId d)
 instantiate t = do
-    subst <- Map.fromList <$> traverse pairWithFreshTVar (typeVars t)
+    subst <- Map.fromList <$> traverse pairWithFreshTVar (T.getTypeVars t)
     return $ applyTotal (subst Map.!) t
 
 pairWithFreshTVar :: v -> Infer (v, T.Type TVarId d)
@@ -184,16 +183,7 @@ unify t1 t2 = case (t1, t2) of
 bind :: TVarId -> T.Type TVarId d -> Either InfiniteType (Substitution d)
 bind var t = case t of
     T.Var v | v == var -> Right Map.empty
-    _ -> if var `elem` typeVars t then Left InfiniteType else Right $ Map.singleton var t
-
-typeVars :: Eq v => T.Type v d -> [v]
-typeVars t = case t of
-    T.Wildcard -> []
-    T.Var var -> [var]
-    T.Call a b -> typeVars a `List.union` typeVars b
-    T.Constructor _ -> []
-    T.Fn -> []
-    T.Int -> []
+    _ -> if var `elem` T.getTypeVars t then Left InfiniteType else Right $ Map.singleton var t
 
 apply :: Substitution d -> T.Type TVarId d -> T.Type TVarId d
 apply subst = applyTotal (\var -> Map.findWithDefault (T.Var var) var subst)

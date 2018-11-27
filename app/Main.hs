@@ -583,7 +583,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
             else do
                 let editorContentChanged = newEditorContent /= editorContent
                 let isMatch typeDefKey = prettyPrintType (getTypeName appState) typeDefKey `containsIgnoringCase` newEditorContent
-                let items = Vec.fromList $ filter isMatch $ (T.Constructor <$> typeDefKeys) ++ [T.Int]
+                let items = Vec.fromList $ filter isMatch autocompleteItems
                 newAutocompleteList <- case maybeAutocompleteList of
                     Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
                     _ | null items -> pure Nothing
@@ -593,6 +593,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         where
             editorContent = head $ getEditContents editor
             commit = commitDataConstructorEdit appState typeDefKey dataConstructorIndex dataConstructor paramIndex path
+            autocompleteItems = [T.Int] ++ (T.Constructor <$> typeDefKeys) ++ (T.Var <$> T.getTypeVarsInTypeDef def)
     _ -> continue appState
     where
         defHistory = view committedTypeDefs appState Map.! typeDefKey
