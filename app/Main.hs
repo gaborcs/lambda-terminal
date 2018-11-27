@@ -232,7 +232,7 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
         _ -> [ mainLayer ]
     mainLayer = toGray $ renderedTitle <=> body
     renderedTitle = case view editState appState of
-        Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
+        Naming editor -> highlight $ str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ hBox $ intersperse (str " ") renderedTitleWords
     renderedTitleWords = case view editState appState of
         AddingTypeConstructorParam index editor -> str typeName : renderedParams where
