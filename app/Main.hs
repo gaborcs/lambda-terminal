@@ -705,6 +705,10 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                         if dataConstructorCount == 1
                             then TypeConstructorSelection Nothing
                             else DataConstructorSelection (min dataConstructorIndex (dataConstructorCount - 2)) []
+            DataConstructorSelection dataConstructorIndex (paramIndex : pathInParam) -> appState
+                & modifyTypeDef typeDefKey
+                    (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes . ix paramIndex
+                    %~ modifyAtPathInType pathInParam (const T.Wildcard))
             _ -> continue appState
         copy = continue $ appState & clipboard %~ case selection of
             TypeConstructorSelection Nothing -> clipboardTypeConstructor ?~ def ^. T.typeConstructor
