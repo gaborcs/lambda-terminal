@@ -706,23 +706,37 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                             then TypeConstructorSelection Nothing
                             else DataConstructorSelection (min dataConstructorIndex (dataConstructorCount - 2)) []
             DataConstructorSelection dataConstructorIndex (paramIndex : pathInParam) ->
-                case dataConstructors ^? ix dataConstructorIndex . T.dataConstructorParamTypes . ix paramIndex of
-                    Just T.Wildcard -> appState
-                        & committedLocations . present . _TypeDefView . typeDefViewSelection .~ newSelection
-                        & modifyTypeDef typeDefKey
-                            (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes
-                            %~ removeItemAtIndex paramIndex)
-                        where
-                            newSelection = DataConstructorSelection dataConstructorIndex $
-                                if dataConstructorParamCount == 1
-                                    then []
-                                    else [min paramIndex (dataConstructorParamCount - 2)]
-                            dataConstructorParamCount =
-                                length $ dataConstructors ^. ix dataConstructorIndex . T.dataConstructorParamTypes
+                case getItemAtPathInType pathInParam param of
+                    Just T.Wildcard -> case viewR pathInParam of
+                        Just (parentPathInParam, childIndex) -> appState
+                            & committedLocations . present . _TypeDefView . typeDefViewSelection
+                                .~ DataConstructorSelection dataConstructorIndex (paramIndex : parentPathInParam)
+                            & modifyTypeDef typeDefKey
+                                (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes . ix paramIndex
+                                    %~ modifyAtPathInType parentPathInParam getOtherChild)
+                            where
+                                getOtherChild t = case t of
+                                    T.Call callee arg
+                                        | childIndex == 0 -> arg
+                                        | childIndex == 1 -> callee
+                                    _ -> error "invalid path"
+                        Nothing -> appState
+                            & committedLocations . present . _TypeDefView . typeDefViewSelection .~ newSelection
+                            & modifyTypeDef typeDefKey
+                                (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes
+                                %~ removeItemAtIndex paramIndex)
+                            where
+                                newSelection = DataConstructorSelection dataConstructorIndex $
+                                    if dataConstructorParamCount == 1
+                                        then []
+                                        else [min paramIndex (dataConstructorParamCount - 2)]
+                                dataConstructorParamCount =
+                                    length $ dataConstructors ^. ix dataConstructorIndex . T.dataConstructorParamTypes
                     _ -> appState
                         & modifyTypeDef typeDefKey
                             (T.dataConstructors . ix dataConstructorIndex . T.dataConstructorParamTypes . ix paramIndex
                             %~ modifyAtPathInType pathInParam (const T.Wildcard))
+                where param = (dataConstructors !! dataConstructorIndex ^. T.dataConstructorParamTypes) !! paramIndex
             _ -> continue appState
         copy = continue $ appState & clipboard %~ case selection of
             TypeConstructorSelection Nothing -> clipboardTypeConstructor ?~ def ^. T.typeConstructor
