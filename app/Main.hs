@@ -697,6 +697,14 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                         if typeConstructorParamCount == 1
                             then Nothing
                             else Just $ min paramIndex (typeConstructorParamCount - 2)
+            DataConstructorSelection dataConstructorIndex [] -> appState
+                & committedLocations . present . _TypeDefView . typeDefViewSelection .~ newSelection
+                & modifyTypeDef typeDefKey (T.dataConstructors %~ removeItemAtIndex dataConstructorIndex)
+                where
+                    newSelection =
+                        if dataConstructorCount == 1
+                            then TypeConstructorSelection Nothing
+                            else DataConstructorSelection (min dataConstructorIndex (dataConstructorCount - 2)) []
             _ -> continue appState
         copy = continue $ appState & clipboard %~ case selection of
             TypeConstructorSelection Nothing -> clipboardTypeConstructor ?~ def ^. T.typeConstructor
