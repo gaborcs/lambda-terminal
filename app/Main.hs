@@ -63,7 +63,8 @@ data EditState
     | Naming EditorState
     | AddingTypeConstructorParam ParamIndex EditorState
     | AddingDataConstructor DataConstructorIndex EditorState
-    | EditingDataConstructor DataConstructorIndex DataConstructor ParamIndex Path EditorState (Maybe (AutocompleteList TypeDefKey))
+    | EditingDataConstructor DataConstructorIndex DataConstructor ParamIndex Path EditorState
+        (Maybe (AutocompleteList (T.Type T.VarName TypeDefKey)))
     | SelectionRenaming EditorState
     | EditingExpr Expr PathsToBeEdited EditorState (Maybe (AutocompleteList Selectable))
 type DataConstructorIndex = Int
@@ -222,7 +223,7 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
     ui = case (view editState appState, view editorExtent appState) of
         (EditingDataConstructor _ _ _ _ _ (Just autocompleteList), Just editorExtent) -> [ autocompleteLayer, mainLayer ] where
             autocompleteLayer = renderAutocomplete autocompleteList printItem editorExtent
-            printItem = getTypeName appState
+            printItem = prettyPrintType $ getTypeName appState
         _ -> [ mainLayer ]
     mainLayer = toGray $ renderedTitle <=> body
     renderedTitle = case view editState appState of
@@ -566,8 +567,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
     EditingDataConstructor dataConstructorIndex dataConstructor paramIndex path editor maybeAutocompleteList -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey (Vty.KChar '\t') [] -> case maybeAutocompleteList >>= ListWidget.listSelectedElement of
-            Just (_, selectedDefKey) ->
-                commit $ T.Constructor selectedDefKey
+            Just (_, t) -> commit t
             Nothing -> continue appState
         Vty.EvKey Vty.KEnter []
             | editorContent == "" || editorContent == "_" ->
@@ -582,8 +582,8 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
             then commit T.Fn
             else do
                 let editorContentChanged = newEditorContent /= editorContent
-                let isMatch typeDefKey = getTypeName appState typeDefKey `containsIgnoringCase` newEditorContent
-                let items = Vec.fromList $ filter isMatch typeDefKeys
+                let isMatch typeDefKey = prettyPrintType (getTypeName appState) typeDefKey `containsIgnoringCase` newEditorContent
+                let items = Vec.fromList $ filter isMatch $ (T.Constructor <$> typeDefKeys) ++ [T.Int]
                 newAutocompleteList <- case maybeAutocompleteList of
                     Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
                     _ | null items -> pure Nothing
