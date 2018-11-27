@@ -102,7 +102,7 @@ data TypeDefViewSelection
         }
     | DataConstructorSelection
         { _dataConstructorIndex :: Int
-        , _dataConstructorParamSelection :: Maybe (ParamIndex, Path)
+        , _pathInDataConstructor :: Path
         }
     deriving Eq
 data ExprDefViewLocation = ExprDefViewLocation
@@ -244,15 +244,15 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
         _ -> renderedDataConstructors
     renderedDataConstructors = zipWith renderDataConstructor [0..] dataConstructors
     renderDataConstructor dataConstructorIndex (T.DataConstructor name paramTypes) = highlightIf
-        (selection == DataConstructorSelection dataConstructorIndex Nothing)
+        (selection == DataConstructorSelection dataConstructorIndex [])
         (snd $ foldl (renderCall $ appState ^. wrappingStyle) (OneWord, str name) renderedParamTypes)
         where
             renderedParamTypes = zipWith render [0..] paramTypes
             render paramIndex = renderWithAttrs (view wrappingStyle appState) editorState selectionInType Nothing . renderType appState where
                 selectionInType = case selection of
-                    DataConstructorSelection selectedDataConstructorIndex (Just (selectedParamIndex, selectedPath))
+                    DataConstructorSelection selectedDataConstructorIndex (selectedParamIndex : selectedPathInParam)
                         | selectedDataConstructorIndex == dataConstructorIndex && selectedParamIndex == paramIndex ->
-                            ContainsSelection selectedPath
+                            ContainsSelection selectedPathInParam
                     _ -> NoSelection
             editorState = case view editState appState of
                 EditingDataConstructor _ _ _ _ editor _ -> Just editor
@@ -602,53 +602,45 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         navBackward = setSelection $ case selection of
             TypeConstructorSelection Nothing -> TypeConstructorSelection Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection $ Just $ max (paramIndex - 1) 0
-            DataConstructorSelection dataConstructorIndex Nothing ->
-                if dataConstructorIndex > 0
-                then DataConstructorSelection (dataConstructorIndex - 1) Nothing
-                else TypeConstructorSelection Nothing
-            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
-                DataConstructorSelection dataConstructorIndex $ Just $ case viewR path of
-                    Nothing -> (max (paramIndex - 1) 0, [])
-                    Just (parentPath, childIndex) -> (paramIndex, parentPath ++ [(childIndex + 1) `mod` siblingCount]) where
-                        siblingCount = getChildCountAtPath parentPath param
-                        param = getParam dataConstructorIndex paramIndex
+            DataConstructorSelection dataConstructorIndex path -> case viewR path of
+                Nothing ->
+                    if dataConstructorIndex > 0
+                    then DataConstructorSelection (dataConstructorIndex - 1) []
+                    else TypeConstructorSelection Nothing
+                Just (parentPath, childIndex) -> DataConstructorSelection dataConstructorIndex newPath where
+                    newPath = parentPath ++ [(childIndex - 1) `mod` siblingCount]
+                    siblingCount = getChildCountAtPath parentPath dataConstructor
+                    dataConstructor = dataConstructors !! dataConstructorIndex
         navForward = setSelection $ case selection of
             TypeConstructorSelection Nothing ->
                 if dataConstructorCount > 0
-                then DataConstructorSelection 0 Nothing
+                then DataConstructorSelection 0 []
                 else TypeConstructorSelection Nothing
             TypeConstructorSelection (Just paramIndex) ->
                 TypeConstructorSelection $ Just $ min (paramIndex + 1) (typeConstructorParamCount - 1)
-            DataConstructorSelection dataConstructorIndex Nothing ->
-                DataConstructorSelection (min (dataConstructorIndex + 1) (dataConstructorCount - 1)) Nothing
-            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
-                DataConstructorSelection dataConstructorIndex $ Just $ case viewR path of
-                    Nothing -> (min (paramIndex + 1) (paramCount - 1), []) where
-                        paramCount = length $ dataConstructors ^. ix dataConstructorIndex . T.dataConstructorParamTypes
-                    Just (parentPath, childIndex) -> (paramIndex, parentPath ++ [(childIndex - 1) `mod` siblingCount]) where
-                        siblingCount = getChildCountAtPath parentPath param
-                        param = getParam dataConstructorIndex paramIndex
+            DataConstructorSelection dataConstructorIndex path -> case viewR path of
+                Nothing -> DataConstructorSelection (min (dataConstructorIndex + 1) (dataConstructorCount - 1)) []
+                Just (parentPath, childIndex) -> DataConstructorSelection dataConstructorIndex newPath where
+                    newPath = parentPath ++ [(childIndex + 1) `mod` siblingCount]
+                    siblingCount = getChildCountAtPath parentPath dataConstructor
+                    dataConstructor = dataConstructors !! dataConstructorIndex
         navToParent = setSelection $ case selection of
             TypeConstructorSelection _ -> TypeConstructorSelection Nothing
-            DataConstructorSelection dataConstructorIndex Nothing -> DataConstructorSelection dataConstructorIndex Nothing
-            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
-                DataConstructorSelection dataConstructorIndex $ case initMay path of
-                    Nothing -> Nothing
-                    Just parentPath -> Just (paramIndex, parentPath)
+            DataConstructorSelection dataConstructorIndex path ->
+                DataConstructorSelection dataConstructorIndex $ initDef [] path
         navToChild = setSelection $ case selection of
             TypeConstructorSelection Nothing ->
                 TypeConstructorSelection $ if typeConstructorParamCount > 0 then Just 0 else Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection (Just paramIndex)
-            DataConstructorSelection dataConstructorIndex Nothing ->
-                DataConstructorSelection dataConstructorIndex (Just (0, []))
-            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
-                DataConstructorSelection dataConstructorIndex $ Just (paramIndex, newPath) where
-                    newPath = if getChildCountAtPath path param > 0 then path ++ [0] else path
-                    param = getParam dataConstructorIndex paramIndex
-        getChildCountAtPath path t = getChildCountOfType parent where
-            parent = fromJustNote "current path invalid" $ getItemAtPathInType path t
-        getParam dataConstructorIndex paramIndex =
-            (dataConstructors !! dataConstructorIndex ^. T.dataConstructorParamTypes) !! paramIndex
+            DataConstructorSelection dataConstructorIndex path ->
+                DataConstructorSelection dataConstructorIndex newPath where
+                    newPath = if getChildCountAtPath path dataConstructor > 0 then path ++ [0] else path
+                    dataConstructor = dataConstructors !! dataConstructorIndex
+        getChildCountAtPath path dataConstructor = case path of
+            [] -> length paramTypes
+            paramIndex : pathInParam -> getChildCountOfType parent where
+                parent = fromJustNote "current path invalid" $ getItemAtPathInType pathInParam $ paramTypes !! paramIndex
+            where paramTypes = dataConstructor ^. T.dataConstructorParamTypes
         setSelection newSelection = continue $ appState
             & committedLocations . present . _TypeDefView . typeDefViewSelection .~ newSelection
         typeConstructorParamCount = length typeConstructorParams
@@ -664,17 +656,17 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         initiateAddParamBeforeSelection = case selection of
             TypeConstructorSelection Nothing -> initiateAddTypeConstructorParam appState 0
             TypeConstructorSelection (Just paramIndex) -> initiateAddTypeConstructorParam appState paramIndex
-            DataConstructorSelection dataConstructorIndex Nothing ->
+            DataConstructorSelection dataConstructorIndex [] ->
                 initiateAddParamToDataConstructor dataConstructorIndex 0
-            DataConstructorSelection dataConstructorIndex (Just (paramIndex, _)) ->
+            DataConstructorSelection dataConstructorIndex (paramIndex : _) ->
                 initiateAddParamToDataConstructor dataConstructorIndex paramIndex
         initiateAddParamAfterSelection = case selection of
             TypeConstructorSelection Nothing -> initiateAddTypeConstructorParam appState typeConstructorParamCount
             TypeConstructorSelection (Just paramIndex) -> initiateAddTypeConstructorParam appState $ paramIndex + 1
-            DataConstructorSelection dataConstructorIndex Nothing ->
+            DataConstructorSelection dataConstructorIndex [] ->
                 initiateAddParamToDataConstructor dataConstructorIndex paramCount where
                     paramCount = length $ dataConstructors !! dataConstructorIndex ^. T.dataConstructorParamTypes
-            DataConstructorSelection dataConstructorIndex (Just (paramIndex, _)) ->
+            DataConstructorSelection dataConstructorIndex (paramIndex : _) ->
                 initiateAddParamToDataConstructor dataConstructorIndex $ paramIndex + 1
         initiateAddParamToDataConstructor dataConstructorIndex paramIndex =
             setEditState appState $ EditingDataConstructor dataConstructorIndex dataConstructor paramIndex [] emptyEditor Nothing where
@@ -682,7 +674,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         initiateCallSelected = initiateModification (`T.Call` T.Wildcard) [1]
         initiateApplyFnToSelected = initiateModification (T.Wildcard `T.Call`) [0]
         initiateModification modify pathWithinSelection = continue $ case selection of
-            DataConstructorSelection dataConstructorIndex (Just (paramIndex, path)) ->
+            DataConstructorSelection dataConstructorIndex (paramIndex : path) ->
                 appState & editState .~
                     EditingDataConstructor dataConstructorIndex dataConstructor paramIndex newPath emptyEditor Nothing where
                         newPath = path ++ pathWithinSelection
@@ -700,10 +692,10 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                 | newDef ^. T.typeConstructor /= def ^. T.typeConstructor || newDataConstructorCount == 0 =
                     TypeConstructorSelection Nothing
                 | newDataConstructorCount /= dataConstructorCount =
-                    DataConstructorSelection (newDataConstructorCount - 1) Nothing
+                    DataConstructorSelection (newDataConstructorCount - 1) []
                 | otherwise = case catMaybes $ zipWith (fmap . (,)) [0..] diffPaths of
                     [] -> selection
-                    (dataConstructorIndex, path) : _ -> DataConstructorSelection dataConstructorIndex $ preview _Cons path
+                    (dataConstructorIndex, path) : _ -> DataConstructorSelection dataConstructorIndex path
             newDef = view present newDefHistory
             newDataConstructorCount = length newDataConstructors
             newDataConstructors = newDef ^. T.dataConstructors
@@ -718,14 +710,14 @@ commitDataConstructorEdit ::
     -> Path
     -> T.Type T.VarName TypeDefKey
     -> EventM AppResourceName (Next AppState)
-commitDataConstructorEdit appState typeDefKey dataConstructorIndex dataConstructor paramIndex path t = appState
+commitDataConstructorEdit appState typeDefKey dataConstructorIndex dataConstructor paramIndex pathInParam t = appState
     & editState .~ NotEditing
-    & committedLocations . present . _TypeDefView . typeDefViewSelection . dataConstructorParamSelection
-        ?~ (paramIndex, path)
+    & committedLocations . present . _TypeDefView . typeDefViewSelection . pathInDataConstructor
+        .~ (paramIndex : pathInParam)
     & modifyTypeDef typeDefKey (T.dataConstructors . ix dataConstructorIndex .~ newDataConstructor)
     where
         newDataConstructor = dataConstructor
-            & T.dataConstructorParamTypes . ix paramIndex %~ modifyAtPathInType path (const t)
+            & T.dataConstructorParamTypes . ix paramIndex %~ modifyAtPathInType pathInParam (const t)
 
 emptyEditor :: Editor String AppResourceName
 emptyEditor = editor EditorName (Just 1) ""
@@ -1060,7 +1052,7 @@ commitAddDataConstructor appState typeDefKey index name =
     if isValidDataConstructorName name
     then appState
         & editState .~ NotEditing
-        & committedLocations . present . _TypeDefView . typeDefViewSelection .~ DataConstructorSelection index Nothing
+        & committedLocations . present . _TypeDefView . typeDefViewSelection .~ DataConstructorSelection index []
         & modifyTypeDef typeDefKey (T.dataConstructors %~ insertAt index (T.DataConstructor name []))
     else continue appState
 
@@ -1200,7 +1192,8 @@ getExprDefs appState = case (appState ^. editState, getLocation appState) of
 getLocation :: AppState -> Location
 getLocation appState = case appState ^. editState of
     EditingDataConstructor dataConstructorIndex _ paramIndex path _ _ ->
-        committedLocation & _TypeDefView . typeDefViewSelection .~ DataConstructorSelection dataConstructorIndex (Just (paramIndex, path))
+        committedLocation & _TypeDefView . typeDefViewSelection
+            .~ DataConstructorSelection dataConstructorIndex (paramIndex : path)
     EditingExpr _ path _ _ -> committedLocation & _ExprDefView . exprDefViewSelection .~ NonEmpty.head path
     _ -> committedLocation
     where committedLocation = appState ^. committedLocations . present
