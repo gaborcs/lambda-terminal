@@ -502,8 +502,8 @@ handleEventOnDefListView appState event maybeSelectedDefKey = case event of
     Vty.EvKey Vty.KDown [] -> maybe (continue appState) select maybeNextDefKey
     Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
     Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
-    Vty.EvKey (Vty.KChar 'A') [] -> addNewTypeDef
-    Vty.EvKey (Vty.KChar 'a') [] -> addNewExprDef
+    Vty.EvKey (Vty.KChar 'O') [] -> openNewTypeDef appState
+    Vty.EvKey (Vty.KChar 'o') [] -> openNewExprDef appState
     Vty.EvKey (Vty.KChar 'q') [] -> halt appState
     _ -> continue appState
     where
@@ -512,21 +512,27 @@ handleEventOnDefListView appState event maybeSelectedDefKey = case event of
         maybeNextDefKey = fmap (+ 1) maybeSelectedIndex >>= flip getItemAtIndex defKeys
         maybeSelectedIndex = maybeSelectedDefKey >>= flip elemIndex defKeys
         defKeys = getDefKeys appState
-        addNewTypeDef = liftIO createNewAppState >>= continue where
-            createNewAppState = handleTypeDefsChange $ appState
-                & committedTypeDefs %~ Map.insert newDefKey (History.create $ T.TypeDef (T.TypeConstructor Nothing []) [])
-                & committedLocations %~ push newLocation . selectNewDef
-            newLocation = TypeDefView $ TypeDefViewLocation newDefKey $ TypeConstructorSelection Nothing
-            newDefKey = createNewDefKey $ view committedTypeDefs appState
-            selectNewDef = present . _DefListView ?~ TypeDefKey newDefKey
-        addNewExprDef = liftIO createNewAppState >>= continue where
-            createNewAppState = handleExprDefsChange $ appState
-                & committedExprDefs %~ Map.insert newDefKey (History.create $ ExprDef Nothing E.Hole)
-                & committedLocations %~ push newLocation . selectNewDef
-            newLocation = ExprDefView $ ExprDefViewLocation newDefKey []
-            newDefKey = createNewDefKey $ view committedExprDefs appState
-            selectNewDef = present . _DefListView ?~ ExprDefKey newDefKey
-        createNewDefKey defs = if null defs then 0 else fst (Map.findMax defs) + 1
+
+openNewTypeDef :: AppState -> EventM AppResourceName (Next AppState)
+openNewTypeDef appState = liftIO createNewAppState >>= continue where
+    createNewAppState = handleTypeDefsChange $ appState
+        & committedTypeDefs %~ Map.insert newDefKey (History.create $ T.TypeDef (T.TypeConstructor Nothing []) [])
+        & committedLocations %~ push newLocation . selectNewDef
+    newLocation = TypeDefView $ TypeDefViewLocation newDefKey $ TypeConstructorSelection Nothing
+    newDefKey = createNewDefKey $ view committedTypeDefs appState
+    selectNewDef = present . _DefListView ?~ TypeDefKey newDefKey
+
+openNewExprDef :: AppState -> EventM AppResourceName (Next AppState)
+openNewExprDef appState = liftIO createNewAppState >>= continue where
+    createNewAppState = handleExprDefsChange $ appState
+        & committedExprDefs %~ Map.insert newDefKey (History.create $ ExprDef Nothing E.Hole)
+        & committedLocations %~ push newLocation . selectNewDef
+    newLocation = ExprDefView $ ExprDefViewLocation newDefKey []
+    newDefKey = createNewDefKey $ view committedExprDefs appState
+    selectNewDef = present . _DefListView ?~ ExprDefKey newDefKey
+
+createNewDefKey :: Map.Map Int a -> Int
+createNewDefKey defs = if null defs then 0 else fst (Map.findMax defs) + 1
 
 getDefKeys :: AppState -> [DefKey]
 getDefKeys appState = (TypeDefKey <$> getTypeDefKeys appState) ++ (ExprDefKey <$> getExprDefKeys appState)
@@ -552,8 +558,8 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar 'i') [] -> navToParent
         Vty.EvKey (Vty.KChar 'k') [] -> navToChild
         Vty.EvKey (Vty.KChar 'e') [] -> initiateSelectionEdit
-        Vty.EvKey (Vty.KChar 'o') [] -> initiateAddDataConstructorBelowSelection
-        Vty.EvKey (Vty.KChar 'O') [] -> initiateAddDataConstructorAboveSelection
+        Vty.EvKey (Vty.KChar 'a') [] -> initiateAddDataConstructorBelowSelection
+        Vty.EvKey (Vty.KChar 'A') [] -> initiateAddDataConstructorAboveSelection
         Vty.EvKey (Vty.KChar '<') [] -> initiateAddParamBeforeSelection
         Vty.EvKey (Vty.KChar '>') [] -> initiateAddParamAfterSelection
         Vty.EvKey (Vty.KChar ')') [] -> initiateCallSelected
@@ -565,6 +571,8 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar 'r') [] -> redo
         Vty.EvKey (Vty.KChar '\t') [] -> switchToNextWrappingStyle appState
         Vty.EvKey Vty.KBackTab [] -> switchToPrevWrappingStyle appState
+        Vty.EvKey (Vty.KChar 'O') [] -> openNewTypeDef appState
+        Vty.EvKey (Vty.KChar 'o') [] -> openNewExprDef appState
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     Naming editor -> case event of
@@ -939,6 +947,8 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         Vty.EvKey (Vty.KChar 'p') [] -> paste
         Vty.EvKey (Vty.KChar 'u') [] -> undo
         Vty.EvKey (Vty.KChar 'r') [] -> redo
+        Vty.EvKey (Vty.KChar 'O') [] -> openNewTypeDef appState
+        Vty.EvKey (Vty.KChar 'o') [] -> openNewExprDef appState
         Vty.EvKey (Vty.KChar 'q') [] -> halt appState
         _ -> continue appState
     _ -> error "invalid state"
