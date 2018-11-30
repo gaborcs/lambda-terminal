@@ -1146,7 +1146,7 @@ getCurrentDefName appState = case getLocation appState of
     _ -> Nothing
 
 cancelEdit :: AppState -> EventM AppResourceName (Next AppState)
-cancelEdit appState = continue $ appState & editState .~ NotEditing
+cancelEdit appState = liftIO (updateDerivedState (appState & editState .~ NotEditing)) >>= continue
 
 commitDefName :: AppState -> String -> (String -> Bool) -> EventM AppResourceName (Next AppState)
 commitDefName appState newName isValid = case newName of
