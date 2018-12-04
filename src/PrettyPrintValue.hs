@@ -10,7 +10,7 @@ prettyPrintValue getName value = case value of
         let printChild child = inParensIf (isMultiWord child) <$> prettyPrintValue getName child
         printedChildren <- traverse printChild children
         return $ unwords $ getName key : printedChildren
-    V.Int n -> Just $ show n
+    V.Integer n -> Just $ show n
 
 inParensIf :: Bool -> String -> String
 inParensIf cond s = if cond then "(" ++ s ++ ")" else s

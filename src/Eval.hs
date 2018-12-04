@@ -25,7 +25,7 @@ eval' env defs expr = case expr of
             V.Constructor key values -> Just $ V.Constructor key $ values ++ [maybeArgVal]
             _ -> Nothing
     E.Constructor key -> Just $ V.Constructor key []
-    E.Int n -> Just $ V.Int n
+    E.Integer n -> Just $ V.Integer n
     E.Primitive p -> Just $ getValue p
     where
         evalPatternMatching alts maybeArgVal = case alts of
@@ -42,6 +42,6 @@ match maybeValue patt = case patt of
         Just (V.Constructor valueConstructorKey values) ->
             if patternConstructorKey == valueConstructorKey then mconcat <$> zipWithM match values patterns else Nothing
         _ -> Nothing
-    P.Int n -> case maybeValue of
-        Just (V.Int m) | n == m -> Just Map.empty
+    P.Integer n -> case maybeValue of
+        Just (V.Integer m) | n == m -> Just Map.empty
         _ -> Nothing

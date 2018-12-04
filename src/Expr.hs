@@ -15,7 +15,7 @@ data Expr defKey constructorKey
     | Fn (PatternMatching defKey constructorKey)
     | Call (Expr defKey constructorKey) (Expr defKey constructorKey)
     | Constructor constructorKey
-    | Int Int
+    | Integer Integer
     | Primitive Primitive
     deriving (Eq, Read, Show)
 

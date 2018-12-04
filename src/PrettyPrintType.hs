@@ -11,7 +11,7 @@ prettyPrintType getTypeName t = case t of
     T.Call callee arg -> print callee ++ " " ++ if isMultiWord arg then "(" ++ print arg ++ ")" else print arg
     T.Constructor typeDefKey -> getTypeName typeDefKey
     T.Fn -> "λ"
-    T.Int -> "Int"
+    T.Integer -> "Integer"
     where print = prettyPrintType getTypeName
 
 defaultTypeVarNames :: [String]

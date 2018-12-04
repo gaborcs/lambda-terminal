@@ -89,7 +89,7 @@ infer instantiateConstructorType defs env expr = case expr of
             t <- getType
             return $ TypedIntermediate $ TypedIntermediateTree t [] []
         Nothing -> return $ UntypedIntermediate []
-    E.Int _ -> return $ TypedIntermediate $ TypedIntermediateTree T.Int [] []
+    E.Integer _ -> return $ TypedIntermediate $ TypedIntermediateTree T.Integer [] []
     E.Primitive p -> do
         t <- instantiate (getType p :: T.Type TVarId d)
         return $ TypedIntermediate $ TypedIntermediateTree t [] []
@@ -125,7 +125,7 @@ inferPattern instantiateConstructorType patt = case patt of
                 constructorType <- getConstructorType
                 return (TypedIntermediate $ TypedIntermediateTree tv [(constructorType, foldr T.fn tv childTypes)] typedChildTrees, typeEnv)
             _ -> return (UntypedIntermediate childTrees, typeEnv)
-    P.Int _ -> return (TypedIntermediate $ TypedIntermediateTree T.Int [] [], Map.empty)
+    P.Integer _ -> return (TypedIntermediate $ TypedIntermediateTree T.Integer [] [], Map.empty)
 
 freshTVar :: Infer (T.Type TVarId d)
 freshTVar = do
@@ -177,7 +177,7 @@ unify t1 t2 = case (t1, t2) of
         return $ compose s2 s1
     (T.Constructor tDef1, T.Constructor tDef2) -> if tDef1 == tDef2 then Just Map.empty else Nothing
     (T.Fn, T.Fn) -> Just Map.empty
-    (T.Int, T.Int) -> Just Map.empty
+    (T.Integer, T.Integer) -> Just Map.empty
     _ -> Nothing
 
 bind :: TVarId -> T.Type TVarId d -> Either InfiniteType (Substitution d)
@@ -195,7 +195,7 @@ applyTotal f t = case t of
     T.Call a b -> T.Call (applyTotal f a) (applyTotal f b)
     T.Constructor name -> T.Constructor name
     T.Fn -> T.Fn
-    T.Int -> T.Int
+    T.Integer -> T.Integer
 
 applyToInferResult :: Substitution d -> InferResult d -> InferResult d
 applyToInferResult subst inferResult = case inferResult of

@@ -21,25 +21,25 @@ getDisplayName p = case p of
 
 getType :: Primitive -> T.Type v d
 getType p = case p of
-    Plus -> binaryIntOpType T.Int
-    Minus -> binaryIntOpType T.Int
-    Times -> binaryIntOpType T.Int
-    Signum -> T.fn T.Int T.Int
+    Plus -> binaryIntegerOpType T.Integer
+    Minus -> binaryIntegerOpType T.Integer
+    Times -> binaryIntegerOpType T.Integer
+    Signum -> T.fn T.Integer T.Integer
 
 getValue :: Primitive -> V.Value c
 getValue p = case p of
-    Plus -> binaryIntOpValue $ \a b -> V.Int (a + b)
-    Minus -> binaryIntOpValue $ \a b -> V.Int (a - b)
-    Times -> binaryIntOpValue $ \a b -> V.Int (a * b)
+    Plus -> binaryIntegerOpValue $ \a b -> V.Integer (a + b)
+    Minus -> binaryIntegerOpValue $ \a b -> V.Integer (a - b)
+    Times -> binaryIntegerOpValue $ \a b -> V.Integer (a * b)
     Signum -> V.Fn $ \case
-        Just (V.Int a) -> Just $ V.Int $ signum a
+        Just (V.Integer a) -> Just $ V.Integer $ signum a
         _ -> Nothing
 
-binaryIntOpType :: T.Type v d -> T.Type v d
-binaryIntOpType resultType = T.fn T.Int $ T.fn T.Int resultType
+binaryIntegerOpType :: T.Type v d -> T.Type v d
+binaryIntegerOpType resultType = T.fn T.Integer $ T.fn T.Integer resultType
 
-binaryIntOpValue :: (Int -> Int -> V.Value t) -> V.Value t
-binaryIntOpValue f = V.Fn $ \maybeAVal -> Just $ V.Fn $ \maybeBVal -> case (maybeAVal, maybeBVal) of
+binaryIntegerOpValue :: (Integer -> Integer -> V.Value t) -> V.Value t
+binaryIntegerOpValue f = V.Fn $ \maybeAVal -> Just $ V.Fn $ \maybeBVal -> case (maybeAVal, maybeBVal) of
     -- once both arguments were passed to the operation, it's time to evaluate them
-    (Just (V.Int a), Just (V.Int b)) -> Just $ f a b
+    (Just (V.Integer a), Just (V.Integer b)) -> Just $ f a b
     _ -> Nothing

@@ -14,5 +14,5 @@ type Env constructorKey = Map.Map String (Maybe (Value constructorKey))
 data Value constructorKey
     = Fn (Maybe (Value constructorKey) -> Maybe (Value constructorKey))
     | Constructor constructorKey [Maybe (Value constructorKey)]
-    | Int Int
+    | Integer Integer
     deriving (Generic, NFData)

@@ -16,7 +16,7 @@ data Type typeVarKey typeDefKey
     | Call (Type typeVarKey typeDefKey) (Type typeVarKey typeDefKey)
     | Constructor typeDefKey
     | Fn
-    | Int
+    | Integer
     deriving (Eq, Read, Show, Functor)
 
 data TypeDef typeDefKey = TypeDef
@@ -55,7 +55,7 @@ getTypeVars t = case t of
     Call a b -> getTypeVars a `union` getTypeVars b
     Constructor _ -> []
     Fn -> []
-    Int -> []
+    Integer -> []
 
 getTypeVarsInTypeDef :: TypeDef d -> [VarName]
 getTypeVarsInTypeDef def = nub $

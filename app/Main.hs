@@ -279,7 +279,7 @@ renderType appState t wrappingStyle (RenderChild renderChild) = case t of
         renderCall wrappingStyle (renderChild 0 $ renderType appState callee) (renderChild 1 $ renderType appState arg)
     T.Constructor typeDefKey -> (OneWord, str $ getTypeName appState typeDefKey)
     T.Fn -> (OneWord, str "λ")
-    T.Int -> (OneWord, str "Int")
+    T.Integer -> (OneWord, str "Integer")
 
 insertAt :: Int -> a -> [a] -> [a]
 insertAt index item = (!! index) . iterate _tail %~ (item :)
@@ -373,7 +373,7 @@ renderExpr appState expr wrappingStyle (RenderChild renderChild) = case expr of
             calleeResult@(_, renderedCallee) = renderChild 0 $ renderExpr appState callee
             argResult@(argResultType, renderedArg) = renderChild 1 $ renderExpr appState arg
     E.Constructor key -> (OneWord, str $ view T.constructorName key)
-    E.Int n -> (OneWord, str $ show n)
+    E.Integer n -> (OneWord, str $ show n)
     E.Primitive p -> (OneWord, str $ getDisplayName p)
 
 renderCall :: WrappingStyle -> RenderResult -> RenderResult -> RenderResult
@@ -409,7 +409,7 @@ renderPattern patt _ (RenderChild renderChild) = case patt of
         renderedChildren = addParensIfNeeded <$> zipWith renderChild [0..] childRenderers
         addParensIfNeeded (resultType, renderedChild) = inParensIf (resultType /= OneWord) renderedChild
         childRenderers = renderPattern <$> children
-    P.Int n -> (OneWord, str $ show n)
+    P.Integer n -> (OneWord, str $ show n)
 
 indent :: Widget n -> Widget n
 indent w = str "  " <+> w
@@ -624,7 +624,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         where
             editorContent = head $ getEditContents editor
             commit = commitDataConstructorEdit appState typeDefKey dataConstructorIndex dataConstructor paramIndex path
-            autocompleteItems = [T.Int] ++ (T.Constructor <$> typeDefKeys) ++ (T.Var <$> T.getTypeVarsInTypeDef def)
+            autocompleteItems = [T.Integer] ++ (T.Constructor <$> typeDefKeys) ++ (T.Var <$> T.getTypeVarsInTypeDef def)
     _ -> continue appState
     where
         defHistory = view committedTypeDefs appState Map.! typeDefKey
@@ -993,7 +993,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
             _ -> continue appState
         commitEditorContent editedExpr (path NonEmpty.:| furtherPathsToBeEdited) editorContent = case readMaybe editorContent of
             Just int -> commitEdit path furtherPathsToBeEdited newExpr where
-                newExpr = modifyAtPathInExpr path (const $ E.Int int) (const $ P.Int int) editedExpr
+                newExpr = modifyAtPathInExpr path (const $ E.Integer int) (const $ P.Integer int) editedExpr
             _ | editorContent == "" || editorContent == "_" -> commitEdit path furtherPathsToBeEdited newExpr where
                 newExpr = modifyAtPathInExpr path (const E.Hole) (const P.Wildcard) editedExpr
             _ | isValidVarName editorContent -> commitEdit path furtherPathsToBeEdited newExpr where
@@ -1219,11 +1219,11 @@ printAutocompleteItem getExprName item = case item of
     Expr (E.Def key) -> getExprName key
     Expr (E.Var name) -> name
     Expr (E.Constructor key) -> view T.constructorName key
-    Expr (E.Int n) -> show n
+    Expr (E.Integer n) -> show n
     Expr (E.Primitive p) -> getDisplayName p
     Pattern (P.Var name) -> name
     Pattern (P.Constructor key _) -> view T.constructorName key
-    Pattern (P.Int n) -> show n
+    Pattern (P.Integer n) -> show n
     _ -> ""
 
 getVarsAtPath :: Path -> E.Expr d c -> [E.VarName]

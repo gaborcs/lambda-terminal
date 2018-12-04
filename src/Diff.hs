@@ -33,8 +33,8 @@ getDiffPathBetweenTypes t1 t2 = case t1 of
     T.Fn -> case t2 of
         T.Fn -> Nothing
         _ -> Just []
-    T.Int -> case t2 of
-        T.Int -> Nothing
+    T.Integer -> case t2 of
+        T.Integer -> Nothing
         _ -> Just []
 
 getDiffPathBetweenExprs :: (Eq c, Eq d) => E.Expr d c -> E.Expr d c -> Maybe Path
@@ -59,8 +59,8 @@ getDiffPathBetweenExprs e1 e2 = case e1 of
     E.Constructor k1 -> case e2 of
         E.Constructor k2 | k1 == k2 -> Nothing
         _ -> Just []
-    E.Int n1 -> case e2 of
-        E.Int n2 | n1 == n2 -> Nothing
+    E.Integer n1 -> case e2 of
+        E.Integer n2 | n1 == n2 -> Nothing
         _ -> Just []
     E.Primitive p1 -> case e2 of
         E.Primitive p2 | p1 == p2 -> Nothing
@@ -78,8 +78,8 @@ getDiffPathBetweenPatterns p1 p2 = case p1 of
         P.Constructor k2 children2 | k1 == k2 && length children1 == length children2 ->
             useChildDiffPaths $ zipWith getDiffPathBetweenPatterns children1 children2
         _ -> Just []
-    P.Int n1 -> case p2 of
-        P.Int n2 | n1 == n2 -> Nothing
+    P.Integer n1 -> case p2 of
+        P.Integer n2 | n1 == n2 -> Nothing
         _ -> Just []
 
 useChildDiffPaths :: [Maybe Path] -> Maybe Path

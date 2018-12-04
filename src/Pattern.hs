@@ -9,7 +9,7 @@ data Pattern constructorKey
     = Wildcard
     | Var VarName
     | Constructor constructorKey [Pattern constructorKey]
-    | Int Int
+    | Integer Integer
     deriving (Eq, Read, Show, Functor)
 
 renameVar :: VarName -> VarName -> Pattern c -> Pattern c
