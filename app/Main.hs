@@ -619,8 +619,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                 let items = Vec.fromList $ filter isMatch autocompleteItems
                 newAutocompleteList <- case maybeAutocompleteList of
                     Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
-                    _ | null items -> pure Nothing
-                    _ -> pure $ Just $ ListWidget.list AutocompleteName items 1
+                    _ -> pure $ if null items then Nothing else Just $ ListWidget.list AutocompleteName items 1
                 setEditState appState $
                     EditingDataConstructorParam dataConstructorIndex dataConstructor paramIndex path newEditor newAutocompleteList
         where
