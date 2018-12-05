@@ -447,8 +447,10 @@ getItemAtPathInType path t = case path of
 
 getChildInType :: ChildIndex -> T.Type v d -> Maybe (T.Type v d)
 getChildInType index t = case t of
-    T.Call callee _ | index == 0 -> Just callee
-    T.Call _ arg | index == 1 -> Just arg
+    T.Call callee arg -> case index of
+        0 -> Just callee
+        1 -> Just arg
+        _ -> Nothing
     _ -> Nothing
 
 getChildCountOfType :: T.Type v d -> Int
