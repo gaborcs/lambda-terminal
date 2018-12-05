@@ -896,8 +896,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 let items = Vec.fromList $ filter isMatch autocompleteItems
                 newAutocompleteList <- case maybeAutocompleteList of
                     Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
-                    _ | null items -> pure Nothing
-                    _ -> pure $ Just $ ListWidget.list AutocompleteName items 1
+                    _ -> pure $ if null items then Nothing else Just $ ListWidget.list AutocompleteName items 1
                 setEditState appState $ EditingExpr editedExpr pathsToBeEdited newEditor newAutocompleteList
         where
             editorContent = head $ getEditContents editor
@@ -1054,8 +1053,9 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                             Just altsWithoutSelected -> (E.Fn altsWithoutSelected, [newChildIndex]) where
                                 newChildIndex = if altIndex == length altsWithoutSelected then childIndex - 2 else childIndex
                             Nothing -> (if selected == Pattern P.Wildcard then snd $ NonEmpty.head alts else E.Hole, [])
-                        E.Call _ arg | childIndex == 0 -> (arg, [])
-                        E.Call callee _ | childIndex == 1 -> (callee, [])
+                        E.Call callee arg
+                            | childIndex == 0 -> (arg, [])
+                            | childIndex == 1 -> (callee, [])
                         _ -> error "invalid path"
                     altIndex = div childIndex 2
                 _ -> continue appState
@@ -1099,12 +1099,12 @@ getWildcardPaths patt = case patt of
 
 isValidTypeName :: Name -> Bool
 isValidTypeName name = case name of
-    firstChar : restOfChars | isUpper firstChar && all isAlphaNum restOfChars -> True
+    firstChar : restOfChars -> isUpper firstChar && all isAlphaNum restOfChars
     _ -> False
 
 isValidExprName :: Name -> Bool
 isValidExprName name = case name of
-    firstChar : restOfChars | isLower firstChar && all isAlphaNum restOfChars -> True
+    firstChar : restOfChars -> isLower firstChar && all isAlphaNum restOfChars
     _ -> False
 
 isValidDataConstructorName :: Name -> Bool
