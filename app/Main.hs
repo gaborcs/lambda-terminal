@@ -307,7 +307,7 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     renderedTitle = case editState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ str $ getExprName appState defKey
-    coloredExpr = modifyDefAttr (`Vty.withForeColor` gray) renderedExpr -- unselected parts of the expression are gray
+    coloredExpr = toGray renderedExpr -- unselected parts of the expression are gray
     def = getExprDefs appState Map.! defKey
     renderedExpr = snd $ renderWithAttrs wrappingStyle editorState (ContainsSelection selectionPath) maybeTypeError renderer
     editorState = case editState of
