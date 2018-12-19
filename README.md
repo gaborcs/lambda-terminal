@@ -46,29 +46,18 @@ Are you ready? Let's get started.
 
 ## Setup
 
-You need [Stack](https://www.haskellstack.org/) to build Lambda Terminal. If you don't already have it, please [install it](https://docs.haskellstack.org/en/stable/install_and_upgrade/).
-Then you need to clone this repository and run `stack install` from the repo's directory:
+The easiest way to run Lambda Terminal is using Docker.
+If you don't already have it, please [install it](https://docs.docker.com/install/).
+Then you can run Lambda Terminal using the following command:
 ```
-$ git clone https://github.com/lambdaland/lambda-terminal.git
-$ cd lambda-terminal
-$ stack install
+$ docker run --rm -it -v lambda-codebase:/codebase lambdaland/lambda-terminal
 ```
-This will create the `lambda-terminal` executable.
 
-## Creating a project
-
-Lambda Terminal uses the current working directory to store source code, so please create an empty directory for this purpose and start Lambda Terminal from there:
-```
-$ mkdir lambda-codebase
-$ cd lambda-codebase
-$ lambda-terminal
-```
+## Playing around
 
 As you start Lambda Terminal for the first time, you will be greeted with an empty list of definitions.
 Now you have three options: open a new type definition by pressing `O`, open a new expression definition by pressing `o`, or quit by pressing `q`.
-Feel free to quit anytime, your definitions are always saved, so you get back to them when running `lambda-terminal` from the same directory.
-
-## Playing around
+Feel free to quit anytime, your definitions are always saved, so you get back to them when running Lambda Terminal with the above command again.
 
 Let's open a new expression definition by pressing `o`.
 You should now see an unnamed expression that is defined by an underscore.
