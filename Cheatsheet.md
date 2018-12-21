@@ -1,7 +1,7 @@
 # Lambda Terminal Cheatsheet
 
 ## General
-`i`, `j`, `k`, `l`, arrow keys - move selection  
+`ijkl`, arrow keys - move selection  
 `Enter` - go to definition  
 `g` - go back in location history  
 `G` - go forward in location history  
