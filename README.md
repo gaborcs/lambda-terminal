@@ -5,17 +5,17 @@ Welcome to Lambda land.
 ## What is Lambda?
 
 Lambda is an experimental programming language.
-It is a functional language, similar in semantics to Haskell.
+It's a functional language, similar in semantics to Haskell.
 "Why another Haskell-like language?" you may ask.
 Haskell is awesome, there's little we could improve upon it in semantics.
-Instead Lambda is an attempt to revolutionize the coding experience.
+Instead, Lambda is an attempt to revolutionize the coding experience.
 
 Most programming languages represent code as a set of text files.
 You navigate code by moving the cursor to the appropriate location in a file.
 Lambda is different.
 It represents code as a data structure.
 For example, an expression is represented as a tree structure.
-When you view an expression definition in the editor, you can select one of its subexpressions and see its type, edit it, or if it's a reference to another expression definition, you can jump to that.
+When you view an expression definition in the editor, you can select any of its subexpressions and see their type, edit them, or if it's a reference to another expression definition, you can jump to that definition.
 This way of working with code may be hard to imagine, but don't worry, this tutorial will show you everything you need to know.
 
 ## What is Lambda Terminal?
@@ -31,7 +31,7 @@ While relying exclusively on keyboard input makes your learning curve steeper, i
 
 With that said, a well-designed graphical UI would certainly have benefits.
 It could add support for mouse and possibly even touch input while keeping the terminal version's efficient keyboard controls.
-It could be more intuitive and it could look really nice.
+It could be more intuitive and more aesthetic.
 But for now we'll keep things simple and stick with the terminal.
 
 ## Is it ready for production?
@@ -56,23 +56,25 @@ $ docker run --rm -it -v lambda-codebase:/codebase lambdaland/lambda-terminal
 ## Playing around
 
 As you start Lambda Terminal for the first time, you will be greeted with an empty list of definitions.
-Now you have three options: open a new type definition by pressing `O`, open a new expression definition by pressing `o`, or quit by pressing `q`.
-Feel free to quit anytime, your definitions are always saved, so you get back to them when running Lambda Terminal with the above command again.
+Now you have three options: open a new expression definition by pressing `o`, open a new type definition by pressing `O` (capital), or quit by pressing `q`.
+If you forget these (or any other) key bindings, you can always consult the [cheatsheet](https://github.com/lambdaland/lambda-terminal/blob/master/Cheatsheet.md).
+Also, feel free to quit anytime, your definitions are always saved, so you get back to them when running Lambda Terminal with the above command again.
 
 Let's open a new expression definition by pressing `o`.
 You should now see an unnamed expression that is defined by an underscore.
 That underscore represents a typed hole.
-Typed holes are expressions that cannot be evaluated but are useful as you write code, since they are placeholders for code that is not written yet.
+A typed hole is an expression that typechecks as any type but cannot be evaluated.
+It is useful as a placeholder for code that is not written yet.
 
 Let's replace the typed hole with something that can be evaluated.
 Press `e` to edit the hole, type `42` and press `Enter`.
-Congratulations, you've just written your first Lambda expression.
+Congratulations, you've just written your first Lambda expression that can be evaluated.
 You might notice `42: Integer` at the bottom of the terminal.
 The part before the colon is the result of evaluating the expression.
 Evaluating `42` results in `42`.
 Shocking, I know.
 The part after the colon shows the type of the expression.
-`42` is an integer, so the type is `Integer`.
+`42` has type `Integer`.
 
 So what can we do with 42?
 We can apply functions to it.
