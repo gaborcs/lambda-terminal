@@ -108,7 +108,8 @@ Delete everything to get a clean slate by pressing `d` (multiple times if needed
 Press `e` to edit the typed hole that remains, type `+` and press `Tab`.
 You should see that `+` has type `λ Integer (λ Integer Integer)`.
 It's a function that takes an `Integer` and returns a function that takes an `Integer` and returns an `Integer`.
-Functions in Lambda cannot take multiple arguments the way functions in most other languages can, so this trick (called currying) is used instead.
+Functions in Lambda cannot take multiple arguments the way functions in most other languages can, so this trick is used instead.
+It's called currying.
 
 Time to use `+` for something.
 Remember how we used `(` to apply a function (`signum`) to the selected value (`42`)?
@@ -144,6 +145,12 @@ When you're done you can select the whole expression and see that the result of 
 This would be a good time to try cycling between wrapping styles using `Tab`. It shows that there are multiple ways to render expressions in Lambda.
 It's the renderer's job to render expressions the best way it can, taking into account the user's preferences.
 
+Alright, now that you've seen the basics, let's write something useful.
+In the next sections, we'll learn more about the language by defining some useful functions and types.
+You should go through them in the given order, because some of them build on each other.
+Some of them are built-ins in other languages, but for Lambda we thought it would be a good learning opportunity to let you define them for yourself.
+We hope you'll enjoy the exercise.
+
 ## `increment`
 Remember that `+ 1` is a function that increments its argument by `1`?
 That actually sounds like a useful function.
@@ -159,9 +166,9 @@ You should now have `increment 2`, and if you select it all, you'll see that the
 
 So `increment 2` has the same result as `+ 1 2`.
 It's not too surprising if you understand Lambda's syntax, as `increment` is defined to be `+ 1`.
-So should we use `increment` or `+ 1` in our code?
-Both have the same result, so we should choose the one that is more readable in the given context.
-For incrementing a counter, `increment` sounds a bit more natural, but for mathematical formulas `+ 1` does.
+So should you use `increment` or `+ 1` in your code?
+Both have the same result, so you should choose the one that is more readable in the given context.
+For incrementing a counter, `increment` might sound a bit more natural, but for mathematical formulas `+ 1` does.
 
 ## `square`
 
@@ -235,7 +242,7 @@ You'll get this: `<eval timeout>: Integer`
 The type inference algorithm infers that the result would be an `Integer`, but the evaluation times out.
 Lambda Terminal tries to evaluate things automatically to make its usage more convenient, but it does so with a time limit to avoid wasting resources.
 The time limit is short, it feels instant to us humans, but a computer is able to do a lot of calculations in that time.
-In this case, the timeout makes a lot of sense, since calling `factorial` with a negative number would execute forever.
+However in this case the calculation times out, since calling `factorial` with a negative number would execute forever.
 It would keep calling itself with lower numbers, getting further from 0 at every step.
 
 Is `factorial`'s behavior acceptable?
@@ -270,7 +277,7 @@ You should now have this:
 | _ -> False
 ```
 The wildcard pattern matches everything like a variable would, but it doesn't introduce a variable binding (you can't refer to `_` like you could to a variable, `_` would mean a typed hole when used as an expression).
-The wildcard pattern useful because you can see at a glance that the value won't be used, even in a more complex expression.
+The wildcard pattern is useful because you can see at a glance that the value won't be used, even in a complex expression.
 
 Try the `isZero` function to prove to yourself that it's correct.
 You may notice that it only accepts `Integer`s.
@@ -317,7 +324,7 @@ Pattern matching works well for defining such simple functions, but in other cas
 
 ## `if`
 An if expression has three parts: a condition, a then branch and an else branch.
-In Lambda, we can write an `if` function that takes these as arguments and returns the appropriate branch based on the condition:
+In Lambda, we can define an `if` function that takes these as arguments and returns the appropriate branch based on the condition:
 ```
 λ condition ->
   λ then ->
@@ -332,7 +339,7 @@ It means that the function below is called with `condition`.
 So if `condition` matches `True`, it will return the `then` argument, otherwise it will return the `else` argument.
 You can input in by starting with `condition`, then pressing `(` to apply a function to it, then pressing `\`.
 As you press `\`, the editor will shift to this style of displaying the call.
-We hope you'll agree that this makes things pretty readable.
+This style resembles `match`/`case` expressions from some other languages, and it should make things pretty readable.
 
 In most languages, calling a function requires evaluating all of its arguments.
 That means `if` cannot be a function, because we want to avoid evaluating both of its branches.
@@ -372,6 +379,8 @@ Open a new expression definition and name it `safeFactorial`, then input the fol
 No.
 There's a better way.
 We can define an optional type that works for any type.
+To do that, we'll replace `Integer` with a type variable.
+A common name for type variables that can contain anything is `a`, so we'll use that name.
 
 Press `g` until you get back to `OptionalInteger`.
 Press `N` to rename it to `Optional`.
@@ -386,7 +395,6 @@ We don't need to change anything, because the changes we made to the original `O
 ## Conclusion
 In this tutorial, we went through the basics of Lambda.
 While you're probably missing some things from more mature languages and tools, you should now have a feel for where the project is headed.
-We hope you found it interesting.
 
 Is this the future of programming?
 What do you think?
