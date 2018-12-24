@@ -6,10 +6,6 @@ author:              "Gabor Csizmadia"
 maintainer:          "gaborcsiz@gmail.com"
 copyright:           "2018 Gabor Csizmadia"
 
-extra-source-files:
-- README.md
-- ChangeLog.md
-
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
 # category:            Language
