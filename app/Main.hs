@@ -246,18 +246,17 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
                 selection == TypeConstructorSelection Nothing || selection == TypeConstructorSelection (Just index)
     typeName = getTypeName appState typeDefKey
     typeConstructorParams = view T.typeConstructorParams typeConstructor
-    body = vBox $ case view editState appState of
-        AddingDataConstructor index editor -> insertAt index renderedEditor renderedDataConstructors where
-            renderedEditor = renderEditor (str . head) True editor
-        _ -> renderedDataConstructors
+    body = vBox renderedDataConstructors
     renderedDataConstructors = zipWith renderDataConstructor [0..] dataConstructors
     renderDataConstructor dataConstructorIndex (T.DataConstructor name paramTypes) = highlightIf
         (selection == DataConstructorSelection dataConstructorIndex [])
         (snd $ foldl (renderCall $ appState ^. wrappingStyle) (OneWord, renderedName) renderedParamTypes)
         where
             renderedName = case view editState appState of
-                RenamingDataConstructor renamedDataConstructorIndex editor
-                    | renamedDataConstructorIndex == dataConstructorIndex -> renderExpandingSingleLineEditor editor
+                AddingDataConstructor index editor | index == dataConstructorIndex ->
+                    renderExpandingSingleLineEditor editor
+                RenamingDataConstructor index editor | index == dataConstructorIndex ->
+                    renderExpandingSingleLineEditor editor
                 _ -> str name
             renderedParamTypes = zipWith render [0..] paramTypes
             render paramIndex = renderWithAttrs (view wrappingStyle appState) editorState selectionInType Nothing . renderType appState where
@@ -1322,6 +1321,10 @@ getExprs appState = view expr <$> getExprDefs appState
 
 getTypeDefs :: AppState -> Map.Map TypeDefKey TypeDef
 getTypeDefs appState = case (appState ^. editState, getLocation appState) of
+    (AddingDataConstructor index editor, TypeDefView loc) -> committedDefs
+        & ix (view typeDefKey loc)
+        . T.dataConstructors
+        %~ insertAt index (T.DataConstructor (head $ getEditContents editor) [])
     (EditingDataConstructorParam dataConstructorIndex dataConstructor _ _ _ _, TypeDefView loc) -> committedDefs
         & ix (view typeDefKey loc)
         . T.dataConstructors
@@ -1338,6 +1341,8 @@ getExprDefs appState = case (appState ^. editState, getLocation appState) of
 
 getLocation :: AppState -> Location
 getLocation appState = case appState ^. editState of
+    AddingDataConstructor index _ ->
+        committedLocation & _TypeDefView . typeDefViewSelection .~ DataConstructorSelection index []
     EditingDataConstructorParam dataConstructorIndex _ paramIndex path _ _ ->
         committedLocation & _TypeDefView . typeDefViewSelection
             .~ DataConstructorSelection dataConstructorIndex (paramIndex : path)
