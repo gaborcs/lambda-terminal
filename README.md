@@ -96,10 +96,13 @@ That means `signum 42` should be an `Integer`.
 Let's verify that by selecting it.
 Selection can be moved using either the arrow keys or the `ijkl` keys.
 The `ijkl` keys work the same way as the arrow keys, but they are in a more convenient place if you're a touch typist.
-Use the up arrow or the `i` key to move up from `signum` to its parent expression, `signum 42`.
-You'll see that the result of evaluating `signum 42` is `1` and its type is `Integer`, as we expected.
+Use the left arrow or the `j` key to select `signum`'s parent expression, `signum 42`.
+You can use the right arrow or `l` to select a child expression, the up arrow or `i` to select the previous sibling and the down arrow or `k` to select the next sibling.
+These controls might be weird at first, but don't worry, you'll get used to them.
+
+As you select `signum 42`, you'll see that the result of evaluating it is `1` and its type is `Integer`, as we expected.
 `signum` returns `1` for all positive integers, `0` for `0`, and `-1` for all negative integers.
-Check it out for a couple of values by selecting `42`, pressing `e` to edit it, and moving the selection back up once you've inserted your desired number.
+Check it out for a couple of values by selecting `42`, pressing `e` to edit it, and moving the selection back to the root once you've inserted your desired number.
 
 ## Arithmetic expressions
 

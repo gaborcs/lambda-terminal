@@ -499,8 +499,10 @@ handleEvent' appState brickEvent = case brickEvent of
 handleEventOnDefListView :: AppState -> Vty.Event -> Maybe SelectedDefKey -> EventM AppResourceName (Next AppState)
 handleEventOnDefListView appState event maybeSelectedDefKey = case event of
     Vty.EvKey Vty.KEnter [] -> maybe continue goToDef maybeSelectedDefKey appState
-    Vty.EvKey Vty.KUp [] -> maybe (continue appState) select maybePrevDefKey
-    Vty.EvKey Vty.KDown [] -> maybe (continue appState) select maybeNextDefKey
+    Vty.EvKey Vty.KUp [] -> selectPrev
+    Vty.EvKey Vty.KDown [] -> selectNext
+    Vty.EvKey (Vty.KChar 'i') [] -> selectPrev
+    Vty.EvKey (Vty.KChar 'k') [] -> selectNext
     Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
     Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
     Vty.EvKey (Vty.KChar 'O') [] -> openNewTypeDef appState
@@ -508,6 +510,8 @@ handleEventOnDefListView appState event maybeSelectedDefKey = case event of
     Vty.EvKey (Vty.KChar 'q') [] -> halt appState
     _ -> continue appState
     where
+        selectPrev = maybe (continue appState) select maybePrevDefKey
+        selectNext = maybe (continue appState) select maybeNextDefKey
         select defKey = continue $ appState & committedLocations . present . _DefListView ?~ defKey
         maybePrevDefKey = fmap (subtract 1) maybeSelectedIndex >>= flip getItemAtIndex defKeys
         maybeNextDefKey = fmap (+ 1) maybeSelectedIndex >>= flip getItemAtIndex defKeys
@@ -550,14 +554,14 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
         Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
         Vty.EvKey (Vty.KChar 'N') [] -> initiateRenameDefinition appState
-        Vty.EvKey Vty.KLeft [] -> navBackward
-        Vty.EvKey Vty.KRight [] -> navForward
-        Vty.EvKey Vty.KUp [] -> navToParent
-        Vty.EvKey Vty.KDown [] -> navToChild
-        Vty.EvKey (Vty.KChar 'j') [] -> navBackward
-        Vty.EvKey (Vty.KChar 'l') [] -> navForward
-        Vty.EvKey (Vty.KChar 'i') [] -> navToParent
-        Vty.EvKey (Vty.KChar 'k') [] -> navToChild
+        Vty.EvKey Vty.KLeft [] -> selectParent
+        Vty.EvKey Vty.KRight [] -> selectChild
+        Vty.EvKey Vty.KUp [] -> selectPrev
+        Vty.EvKey Vty.KDown [] -> selectNext
+        Vty.EvKey (Vty.KChar 'j') [] -> selectParent
+        Vty.EvKey (Vty.KChar 'l') [] -> selectChild
+        Vty.EvKey (Vty.KChar 'i') [] -> selectPrev
+        Vty.EvKey (Vty.KChar 'k') [] -> selectNext
         Vty.EvKey (Vty.KChar 'e') [] -> initiateSelectionEdit
         Vty.EvKey (Vty.KChar 'a') [] -> initiateAddDataConstructorBelowSelection
         Vty.EvKey (Vty.KChar 'A') [] -> initiateAddDataConstructorAboveSelection
@@ -631,7 +635,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         def = currentTypeDefs Map.! typeDefKey
         currentTypeDefs = getTypeDefs appState
         typeDefKeys = getTypeDefKeys appState
-        navBackward = setSelection $ case selection of
+        selectPrev = setSelection $ case selection of
             TypeConstructorSelection Nothing -> TypeConstructorSelection Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection $ Just $ max (paramIndex - 1) 0
             DataConstructorSelection dataConstructorIndex path -> case viewR path of
@@ -643,7 +647,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                     newPath = parentPath ++ [(childIndex - 1) `mod` siblingCount]
                     siblingCount = getChildCountAtPath parentPath dataConstructor
                     dataConstructor = dataConstructors !! dataConstructorIndex
-        navForward = setSelection $ case selection of
+        selectNext = setSelection $ case selection of
             TypeConstructorSelection Nothing ->
                 if dataConstructorCount > 0
                 then DataConstructorSelection 0 []
@@ -656,11 +660,11 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                     newPath = parentPath ++ [(childIndex + 1) `mod` siblingCount]
                     siblingCount = getChildCountAtPath parentPath dataConstructor
                     dataConstructor = dataConstructors !! dataConstructorIndex
-        navToParent = setSelection $ case selection of
+        selectParent = setSelection $ case selection of
             TypeConstructorSelection _ -> TypeConstructorSelection Nothing
             DataConstructorSelection dataConstructorIndex path ->
                 DataConstructorSelection dataConstructorIndex $ initDef [] path
-        navToChild = setSelection $ case selection of
+        selectChild = setSelection $ case selection of
             TypeConstructorSelection Nothing ->
                 TypeConstructorSelection $ if typeConstructorParamCount > 0 then Just 0 else Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection (Just paramIndex)
@@ -925,14 +929,14 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
         Vty.EvKey (Vty.KChar 'N') [] -> initiateRenameDefinition appState
         Vty.EvKey (Vty.KChar 'n') [] -> initiateRenameSelection
-        Vty.EvKey Vty.KUp [] -> navToParent
-        Vty.EvKey Vty.KDown [] -> navToChild
-        Vty.EvKey Vty.KLeft [] -> navBackward
-        Vty.EvKey Vty.KRight [] -> navForward
-        Vty.EvKey (Vty.KChar 'i') [] -> navToParent
-        Vty.EvKey (Vty.KChar 'k') [] -> navToChild
-        Vty.EvKey (Vty.KChar 'j') [] -> navBackward
-        Vty.EvKey (Vty.KChar 'l') [] -> navForward
+        Vty.EvKey Vty.KLeft [] -> selectParent
+        Vty.EvKey Vty.KRight [] -> selectChild
+        Vty.EvKey Vty.KUp [] -> selectPrev
+        Vty.EvKey Vty.KDown [] -> selectNext
+        Vty.EvKey (Vty.KChar 'j') [] -> selectParent
+        Vty.EvKey (Vty.KChar 'l') [] -> selectChild
+        Vty.EvKey (Vty.KChar 'i') [] -> selectPrev
+        Vty.EvKey (Vty.KChar 'k') [] -> selectNext
         Vty.EvKey (Vty.KChar 'e') [] -> initiateSelectionEdit
         Vty.EvKey (Vty.KChar ')') [] -> callSelected
         Vty.EvKey (Vty.KChar '(') [] -> applyFnToSelected
@@ -958,11 +962,11 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         getCurrentExprName = getExprName appState
         def = currentExprDefs Map.! defKey
         currentEditState = view editState appState
-        navToParent = nav parentPath
-        navToChild = nav pathToFirstChildOfSelected
-        navBackward = nav prevSiblingPath
-        navForward = nav nextSiblingPath
-        nav path = if isJust $ getItemAtPath path then liftIO createNewAppState >>= continue else continue appState where
+        selectParent = select parentPath
+        selectChild = select pathToFirstChildOfSelected
+        selectPrev = select prevSiblingPath
+        selectNext = select nextSiblingPath
+        select path = if isJust $ getItemAtPath path then liftIO createNewAppState >>= continue else continue appState where
             createNewAppState = updateEvalResult $ appState
                 & committedLocations . present . _ExprDefView . exprDefViewSelection .~ path
         parentPath = if null selectionPath then [] else init selectionPath
