@@ -5,18 +5,10 @@ Welcome to Lambda land.
 ## What is Lambda?
 
 Lambda is an experimental programming language.
-It's a functional language, similar in semantics to Haskell.
-"Why another Haskell-like language?" you may ask.
-Haskell is awesome, there's little we could improve upon it in semantics.
-Instead, Lambda is an attempt to revolutionize the coding experience.
-
-Most programming languages represent code as a set of text files.
-You navigate code by moving the cursor to the appropriate location in a file.
-Lambda is different.
-It represents code as a data structure.
-For example, an expression is represented as a tree structure.
-When you view an expression definition in the editor, you can select any of its subexpressions and see their type, edit them, or if it's a reference to another expression definition, you can jump to that definition.
-This way of working with code may be hard to imagine, but don't worry, this tutorial will show you everything you need to know.
+It's a functional language, similar in semantics to Haskell, but unlike Haskell and other languages that represent code as a set of text files, Lambda represents code as a data structure.
+This enables a very different way of editing code.
+Instead of using a regular text editor, you use an editor designed for Lambda, which is able to take advantage of the language design.
+For example, when you view an expression definition in the editor, you can select any of its subexpressions to see their type for a better understanding of how things fit together.
 
 ## What is Lambda Terminal?
 
