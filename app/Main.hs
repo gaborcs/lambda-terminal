@@ -556,6 +556,7 @@ getExprDefKeys = Map.keys . view committedExprDefs
 handleEventOnTypeDefView :: AppState -> Vty.Event -> TypeDefViewLocation -> EventM AppResourceName (Next AppState)
 handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selection) = case view editState appState of
     NotEditing -> case event of
+        Vty.EvKey Vty.KEnter [] -> goToDefinition
         Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
         Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
         Vty.EvKey (Vty.KChar 'N') [] -> initiateRenameDefinition appState
@@ -649,6 +650,16 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         def = currentTypeDefs Map.! typeDefKey
         currentTypeDefs = getTypeDefs appState
         typeDefKeys = getTypeDefKeys appState
+        goToDefinition = case selection of
+            DataConstructorSelection dataConstructorIndex (paramIndex : pathInParam) ->
+                case getItemAtPathInType pathInParam param of
+                    Just (T.Constructor defKey) | Map.member defKey currentTypeDefs ->
+                        goToTypeDef defKey (TypeConstructorSelection Nothing) appState
+                    _ -> continue appState
+                where
+                    param = (dataConstructor ^. T.dataConstructorParamTypes) !! paramIndex
+                    dataConstructor = dataConstructors !! dataConstructorIndex
+            _ -> continue appState
         selectPrev = setSelection $ case selection of
             TypeConstructorSelection Nothing -> TypeConstructorSelection Nothing
             TypeConstructorSelection (Just paramIndex) -> TypeConstructorSelection $ Just $ max (paramIndex - 1) 0
@@ -1012,7 +1023,17 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         getItemAtPath path = getItemAtPathInExpr path (view expr def)
         goToDefinition = case selected of
             Expr (E.Def defKey) | Map.member defKey currentExprDefs -> goToExprDef defKey appState
+            Expr (E.Constructor dataConstructorKey) -> goToDataConstructor dataConstructorKey
+            Pattern (P.Constructor dataConstructorKey _) -> goToDataConstructor dataConstructorKey
             _ -> continue appState
+        goToDataConstructor (T.DataConstructorKey typeDefKey constructorName) =
+            goToTypeDef typeDefKey selection appState where
+                selection = case elemIndex constructorName dataConstructorNames of
+                    Just dataConstructorIndex -> DataConstructorSelection dataConstructorIndex []
+                    Nothing -> TypeConstructorSelection Nothing
+                dataConstructorNames = view T.dataConstructorName <$> dataConstructors
+                dataConstructors = typeDef ^. T.dataConstructors
+                typeDef = currentTypeDefs Map.! typeDefKey
         initiateRenameSelection = case selected of
             Pattern (P.Var name) -> setEditState appState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
             Expr (E.Var name) -> setEditState appState $ SelectionRenaming $ applyEdit gotoEOL $ editor EditorName (Just 1) name
@@ -1151,11 +1172,11 @@ isValidVarName = isValidExprName
 
 goToDef :: DefKey -> AppState -> EventM AppResourceName (Next AppState)
 goToDef key = case key of
-    TypeDefKey k -> goToTypeDef k
+    TypeDefKey k -> goToTypeDef k (TypeConstructorSelection Nothing)
     ExprDefKey k -> goToExprDef k
 
-goToTypeDef :: TypeDefKey -> AppState -> EventM AppResourceName (Next AppState)
-goToTypeDef key = modifyLocationHistory $ push $ TypeDefView $ TypeDefViewLocation key $ TypeConstructorSelection Nothing
+goToTypeDef :: TypeDefKey -> TypeDefViewSelection -> AppState -> EventM AppResourceName (Next AppState)
+goToTypeDef key = modifyLocationHistory . push . TypeDefView . TypeDefViewLocation key
 
 goToExprDef :: ExprDefKey -> AppState -> EventM AppResourceName (Next AppState)
 goToExprDef key = modifyLocationHistory $ push $ ExprDefView $ ExprDefViewLocation key []
