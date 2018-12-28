@@ -57,6 +57,15 @@ getTypeVars t = case t of
     Fn -> []
     Integer -> []
 
+mapTypeVars :: (v1 -> Type v2 d) -> Type v1 d -> Type v2 d
+mapTypeVars f t = case t of
+    Wildcard -> Wildcard
+    Var var -> f var
+    Call a b -> Call (mapTypeVars f a) (mapTypeVars f b)
+    Constructor name -> Constructor name
+    Fn -> Fn
+    Integer -> Integer
+
 getTypeVarsInTypeDef :: TypeDef d -> [VarName]
 getTypeVarsInTypeDef def = nub $
     (def ^. typeConstructor . typeConstructorParams)
@@ -68,3 +77,11 @@ getDataConstructorType getTypeDef (DataConstructorKey typeDefKey constructorName
     resultType = foldl Call (Constructor typeDefKey) $ Var <$> view typeConstructorParams typeConstructor
     maybeParamTypes = view dataConstructorParamTypes <$> maybeConstructorDef
     maybeConstructorDef = find ((== constructorName) . view dataConstructorName) dataConstructors
+
+renameTypeVar :: VarName -> VarName -> TypeDef d -> TypeDef d
+renameTypeVar oldName newName =
+    over (typeConstructor . typeConstructorParams) (map replaceIfMatch) .
+    over dataConstructors (map $ over dataConstructorParamTypes $ map renameInType)
+    where
+        replaceIfMatch name = if name == oldName then newName else name
+        renameInType = mapTypeVars $ Var . replaceIfMatch

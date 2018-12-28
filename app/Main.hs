@@ -66,10 +66,12 @@ data EditState
     | Naming EditorState
     | AddingTypeConstructorParam ParamIndex EditorState
     | EditingTypeConstructorParam ParamIndex EditorState
+    | RenamingTypeConstructorParam ParamIndex T.VarName EditorState
     | AddingDataConstructor DataConstructorIndex EditorState
     | RenamingDataConstructor DataConstructorIndex EditorState
     | EditingDataConstructorParam DataConstructorIndex DataConstructor ParamIndex Path EditorState
         (Maybe (AutocompleteList (T.Type T.VarName TypeDefKey)))
+    | RenamingDataConstructorParam T.VarName EditorState
     | SelectionRenaming EditorState
     | EditingExpr Expr PathsToBeEdited EditorState (Maybe (AutocompleteList Selectable))
 type DataConstructorIndex = Int
@@ -239,6 +241,8 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
             renderedParams = insertAt index (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
         EditingTypeConstructorParam index editor -> str typeName : renderedParams where
             renderedParams = set (ix index) (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
+        RenamingTypeConstructorParam index _ editor -> str typeName : renderedParams where
+            renderedParams = set (ix index) (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
         _ -> renderedTypeName : renderedParams where
             renderedTypeName = highlightIf (selection == TypeConstructorSelection Nothing) (str typeName)
             renderedParams = zipWith (highlightIf . isSelected) [0..] (str <$> typeConstructorParams)
@@ -267,6 +271,7 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
                     _ -> NoSelection
             editorState = case view editState appState of
                 EditingDataConstructorParam _ _ _ _ editor _ -> Just editor
+                RenamingDataConstructorParam _ editor -> Just editor
                 _ -> Nothing
     T.TypeDef typeConstructor dataConstructors = getTypeDefs appState Map.! typeDefKey
 
@@ -317,7 +322,7 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     maybeTypeError = preview Infer._TypeError inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
-        Just t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) (Infer.applyTotal (fmap T.Var defaultTypeVarNames !!) t)
+        Just t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) (T.mapTypeVars (fmap T.Var defaultTypeVarNames !!) t)
         Nothing -> "Type error"
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
@@ -554,6 +559,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState
         Vty.EvKey (Vty.KChar 'G') [] -> goForwardInLocationHistory appState
         Vty.EvKey (Vty.KChar 'N') [] -> initiateRenameDefinition appState
+        Vty.EvKey (Vty.KChar 'n') [] -> initiateRenameSelection
         Vty.EvKey Vty.KLeft [] -> selectParent
         Vty.EvKey Vty.KRight [] -> selectChild
         Vty.EvKey Vty.KUp [] -> selectPrev
@@ -592,6 +598,14 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitEditTypeConstructorParam appState typeDefKey index (head $ getEditContents editor)
         _ -> handleEditorEvent event editor >>= setEditState appState . EditingTypeConstructorParam index
+    RenamingTypeConstructorParam index oldName editor -> case event of
+        Vty.EvKey Vty.KEsc [] -> cancelEdit appState
+        Vty.EvKey Vty.KEnter [] -> commitRenameTypeVar appState typeDefKey oldName (head $ getEditContents editor)
+        _ -> handleEditorEvent event editor >>= setEditState appState . RenamingTypeConstructorParam index oldName
+    RenamingDataConstructorParam oldName editor -> case event of
+        Vty.EvKey Vty.KEsc [] -> cancelEdit appState
+        Vty.EvKey Vty.KEnter [] -> commitRenameTypeVar appState typeDefKey oldName (head $ getEditContents editor)
+        _ -> handleEditorEvent event editor >>= setEditState appState . RenamingDataConstructorParam oldName
     AddingDataConstructor index editor -> case event of
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey Vty.KEnter [] -> commitAddDataConstructor appState typeDefKey index (head $ getEditContents editor)
@@ -683,16 +697,28 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         typeConstructorParams = currentTypeDefs ^. ix typeDefKey . T.typeConstructor . T.typeConstructorParams
         dataConstructorCount = length dataConstructors
         dataConstructors = getDataConstructors appState typeDefKey
+        initiateRenameSelection = case selection of
+            TypeConstructorSelection Nothing -> initiateRenameDefinition appState
+            TypeConstructorSelection (Just paramIndex) -> setEditState appState initialEditState where
+                initialEditState = RenamingTypeConstructorParam paramIndex paramName initialEditor
+                initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) paramName
+                paramName = typeConstructorParams !! paramIndex
+            DataConstructorSelection dataConstructorIndex [] -> initiateRenameDataConstructor dataConstructorIndex
+            DataConstructorSelection dataConstructorIndex (paramIndex : pathInParam) -> case getItemAtPathInType pathInParam param of
+                Just (T.Var name) -> setEditState appState initialEditState where
+                    initialEditState = RenamingDataConstructorParam name initialEditor
+                    initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) name
+                _ -> continue appState
+                where
+                    param = (dataConstructor ^. T.dataConstructorParamTypes) !! paramIndex
+                    dataConstructor = dataConstructors !! dataConstructorIndex
         initiateSelectionEdit = case selection of
             TypeConstructorSelection Nothing -> initiateRenameDefinition appState
             TypeConstructorSelection (Just paramIndex) -> setEditState appState initialEditState where
                 initialEditState = EditingTypeConstructorParam paramIndex initialEditor
                 initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) paramName
                 paramName = typeConstructorParams !! paramIndex
-            DataConstructorSelection dataConstructorIndex [] -> setEditState appState initialEditState where
-                initialEditState = RenamingDataConstructor dataConstructorIndex initialEditor
-                initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) dataConstructorName
-                dataConstructorName = dataConstructors !! dataConstructorIndex ^. T.dataConstructorName
+            DataConstructorSelection dataConstructorIndex [] -> initiateRenameDataConstructor dataConstructorIndex
             DataConstructorSelection dataConstructorIndex (paramIndex : pathInParam) -> setEditState appState initialEditState where
                 initialEditState =
                     EditingDataConstructorParam dataConstructorIndex dataConstructor paramIndex pathInParam initialEditor Nothing
@@ -703,6 +729,10 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                     Just t -> prettyPrintType (getTypeName appState) t
                     Nothing -> error "invalid path"
                 param = (dataConstructor ^. T.dataConstructorParamTypes) !! paramIndex
+        initiateRenameDataConstructor index = setEditState appState initialEditState where
+            initialEditState = RenamingDataConstructor index initialEditor
+            initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) dataConstructorName
+            dataConstructorName = dataConstructors !! index ^. T.dataConstructorName
         initiateAddDataConstructorBelowSelection = initiateAddDataConstructor appState $ case selection of
             TypeConstructorSelection _ -> 0
             DataConstructorSelection index _ -> index + 1
@@ -1172,14 +1202,14 @@ initiateAddDataConstructor :: AppState -> DataConstructorIndex -> EventM AppReso
 initiateAddDataConstructor appState index =
     continue $ appState & editState .~ AddingDataConstructor index (editor EditorName (Just 1) "")
 
-commitAddTypeConstructorParam :: AppState -> Int -> TypeDefKey -> Name -> EventM AppResourceName (Next AppState)
+commitAddTypeConstructorParam :: AppState -> TypeDefKey -> Int -> Name -> EventM AppResourceName (Next AppState)
 commitAddTypeConstructorParam = commitTypeConstructorParam insertAt
 
-commitEditTypeConstructorParam :: AppState -> Int -> TypeDefKey -> Name -> EventM AppResourceName (Next AppState)
+commitEditTypeConstructorParam :: AppState -> TypeDefKey -> Int -> Name -> EventM AppResourceName (Next AppState)
 commitEditTypeConstructorParam = commitTypeConstructorParam $ set . ix
 
 commitTypeConstructorParam :: (Int -> T.VarName -> [T.VarName] -> [T.VarName])
-    -> AppState -> Int -> TypeDefKey -> Name -> EventM AppResourceName (Next AppState)
+    -> AppState -> TypeDefKey -> Int -> Name -> EventM AppResourceName (Next AppState)
 commitTypeConstructorParam modify appState typeDefKey index name =
     if isValidVarName name
     then appState
@@ -1187,6 +1217,14 @@ commitTypeConstructorParam modify appState typeDefKey index name =
         & committedLocations . present . _TypeDefView . typeDefViewSelection .~ TypeConstructorSelection (Just index)
         & modifyTypeDef typeDefKey (T.typeConstructor . T.typeConstructorParams %~ modify index name)
     else continue appState
+
+commitRenameTypeVar :: AppState -> TypeDefKey -> T.VarName -> T.VarName -> EventM AppResourceName (Next AppState)
+commitRenameTypeVar appState typeDefKey oldName newName =
+    if isValidVarName newName
+        then appState
+            & editState .~ NotEditing
+            & modifyTypeDef typeDefKey (T.renameTypeVar oldName newName)
+        else continue appState
 
 commitAddDataConstructor :: AppState -> TypeDefKey -> Int -> Name -> EventM AppResourceName (Next AppState)
 commitAddDataConstructor appState typeDefKey index name =

@@ -136,7 +136,7 @@ freshTVar = do
 instantiate :: Ord v => T.Type v d -> Infer (T.Type TVarId d)
 instantiate t = do
     subst <- Map.fromList <$> traverse pairWithFreshTVar (T.getTypeVars t)
-    return $ applyTotal (subst Map.!) t
+    return $ T.mapTypeVars (subst Map.!) t
 
 pairWithFreshTVar :: v -> Infer (v, T.Type TVarId d)
 pairWithFreshTVar var = (,) var <$> freshTVar
@@ -186,16 +186,7 @@ bind var t = case t of
     _ -> if var `elem` T.getTypeVars t then Left InfiniteType else Right $ Map.singleton var t
 
 apply :: Substitution d -> T.Type TVarId d -> T.Type TVarId d
-apply subst = applyTotal (\var -> Map.findWithDefault (T.Var var) var subst)
-
-applyTotal :: (v1 -> T.Type v2 d) -> T.Type v1 d -> T.Type v2 d
-applyTotal f t = case t of
-    T.Wildcard -> T.Wildcard
-    T.Var var -> f var
-    T.Call a b -> T.Call (applyTotal f a) (applyTotal f b)
-    T.Constructor name -> T.Constructor name
-    T.Fn -> T.Fn
-    T.Integer -> T.Integer
+apply subst = T.mapTypeVars $ \var -> Map.findWithDefault (T.Var var) var subst
 
 applyToInferResult :: Substitution d -> InferResult d -> InferResult d
 applyToInferResult subst inferResult = case inferResult of
