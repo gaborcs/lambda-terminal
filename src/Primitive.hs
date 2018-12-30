@@ -9,6 +9,8 @@ data Primitive
     = Plus
     | Minus
     | Times
+    | Div
+    | Mod
     | Signum
     deriving (Eq, Read, Show, Bounded, Enum)
 
@@ -17,6 +19,8 @@ getDisplayName p = case p of
     Plus -> "+"
     Minus -> "-"
     Times -> "*"
+    Div -> "div"
+    Mod -> "mod"
     Signum -> "signum"
 
 getType :: Primitive -> T.Type v d
@@ -24,6 +28,8 @@ getType p = case p of
     Plus -> binaryIntegerOpType T.Integer
     Minus -> binaryIntegerOpType T.Integer
     Times -> binaryIntegerOpType T.Integer
+    Div -> binaryIntegerOpType T.Integer
+    Mod -> binaryIntegerOpType T.Integer
     Signum -> T.fn T.Integer T.Integer
 
 getValue :: Primitive -> V.Value c
@@ -31,6 +37,8 @@ getValue p = case p of
     Plus -> binaryIntegerOpValue $ \a b -> V.Integer (a + b)
     Minus -> binaryIntegerOpValue $ \a b -> V.Integer (a - b)
     Times -> binaryIntegerOpValue $ \a b -> V.Integer (a * b)
+    Div -> binaryIntegerOpValue $ \a b -> V.Integer (div a b)
+    Mod -> binaryIntegerOpValue $ \a b -> V.Integer (mod a b)
     Signum -> V.Fn $ \case
         Just (V.Integer a) -> Just $ V.Integer $ signum a
         _ -> Nothing
