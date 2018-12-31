@@ -319,11 +319,11 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
         SelectionRenaming editor -> Just editor
         _ -> Nothing
     renderer = renderExpr appState $ view expr def
-    maybeTypeError = preview Infer._TypeError inferResult
+    maybeTypeError = preview Infer._Untyped inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
-        Just t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) (T.mapTypeVars (fmap T.Var defaultTypeVarNames !!) t)
-        Nothing -> "Type error"
+        Right t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) (T.mapTypeVars (fmap T.Var defaultTypeVarNames !!) t)
+        Left errorMsg -> errorMsg
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
         Error -> ""
@@ -429,19 +429,19 @@ getChildSelection selection index = case selection of
     NoSelection -> NoSelection
 
 getChildTypeError :: Maybe TypeError -> ChildIndex -> Maybe TypeError
-getChildTypeError maybeTypeError index = childResult >>= preview Infer._TypeError
-    where childResult = (!! index) <$> maybeTypeError
+getChildTypeError maybeTypeError index = childResult >>= preview Infer._Untyped
+    where childResult = (!! index) . view Infer.childResults <$> maybeTypeError
 
-getTypeAtPathInInferResult :: Path -> InferResult -> Maybe (T.Type Infer.TVarId TypeDefKey)
+getTypeAtPathInInferResult :: Path -> InferResult -> Either Infer.ErrorMsg (T.Type Infer.TVarId TypeDefKey)
 getTypeAtPathInInferResult path inferResult = case inferResult of
-    Infer.Typed typeTree -> getTypeAtPathInTypeTree path typeTree
-    Infer.TypeError childResults -> case path of
-        [] -> Nothing
+    Infer.Typed typeTree -> Right $ getTypeAtPathInTypeTree path typeTree
+    Infer.Untyped (Infer.TypeError msg childResults) -> case path of
+        [] -> Left msg
         index:restOfPath -> getTypeAtPathInInferResult restOfPath $ childResults !! index
 
-getTypeAtPathInTypeTree :: Path -> TypeTree -> Maybe (T.Type Infer.TVarId TypeDefKey)
+getTypeAtPathInTypeTree :: Path -> TypeTree -> T.Type Infer.TVarId TypeDefKey
 getTypeAtPathInTypeTree path (Infer.TypeTree t children) = case path of
-    [] -> Just t
+    [] -> t
     index:restOfPath -> getTypeAtPathInTypeTree restOfPath $ children !! index
 
 getItemAtPathInType :: Path -> T.Type v d -> Maybe (T.Type v d)
