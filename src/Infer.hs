@@ -6,6 +6,7 @@ import Primitive
 import Control.Lens
 import Control.Lens.Extras
 import Control.Monad.State
+import Data.List
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Expr as E
@@ -48,7 +49,7 @@ inferType :: (Ord ed, Ord tv, Eq td)
     -> Map.Map ed (E.Expr ed c)
     -> E.Expr ed c
     -> InferResult td
-inferType getConstructorType defs expr = solve intermediateTree where
+inferType getConstructorType defs expr = indexTypeVarsFromZero (solve intermediateTree) where
     intermediateTree = evalState (infer instantiateConstructorType (Map.map Right defs) Map.empty expr) 0
     instantiateConstructorType key = instantiate <$> getConstructorType key
 
@@ -237,6 +238,20 @@ applyToInferResult subst inferResult = case inferResult of
 
 applyToTypeTree :: Substitution d -> TypeTree d -> TypeTree d
 applyToTypeTree subst (TypeTree t children) = TypeTree (apply subst t) (applyToTypeTree subst <$> children)
+
+indexTypeVarsFromZero :: InferResult td -> InferResult td
+indexTypeVarsFromZero inferResult = applyToInferResult subst inferResult where
+    subst = Map.fromList $ zip typeVars (T.Var <$> [0..])
+    typeVars = nub $ getTypeVarsInInferResultWithDuplicates inferResult
+
+getTypeVarsInInferResultWithDuplicates :: InferResult td -> [Int]
+getTypeVarsInInferResultWithDuplicates inferResult = case inferResult of
+    Typed typeTree -> getTypeVarsInTypeTreeWithDuplicates typeTree
+    Untyped (TypeError _ children) -> children >>= getTypeVarsInInferResultWithDuplicates
+
+getTypeVarsInTypeTreeWithDuplicates :: TypeTree td -> [Int]
+getTypeVarsInTypeTreeWithDuplicates (TypeTree t children) =
+    T.getTypeVars t ++ (children >>= getTypeVarsInTypeTreeWithDuplicates)
 
 hasErrorAtRoot :: TypeError d -> Bool
 hasErrorAtRoot = all (is _Typed) . view childResults

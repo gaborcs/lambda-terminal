@@ -66,11 +66,8 @@ defs = Map.fromList
 
 hasType :: E.Expr String TestDataConstructorKey -> T.Type Int TestType -> Expectation
 hasType expr expectedType = case inferType getConstructorType defs expr of
-    Typed (TypeTree actualType _) -> indexTVarsFromZero actualType `shouldBe` expectedType
+    Typed (TypeTree actualType _) -> actualType `shouldBe` expectedType
     _ -> expectationFailure $ "type error for: " ++ show expr
-
-indexTVarsFromZero :: T.Type Int t -> T.Type Int t
-indexTVarsFromZero t = apply (Map.fromList $ zip (T.getTypeVars t) (T.Var <$> [0..])) t
 
 failsAtPath :: E.Expr String TestDataConstructorKey -> Path -> Expectation
 failsAtPath expr path = inferType getConstructorType defs expr `hasErrorAtPath` path
