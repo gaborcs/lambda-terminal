@@ -181,10 +181,7 @@ solve' :: Eq d => Substitution d -> IntermediateTree d -> (Substitution d, Infer
 solve' initialSubst tree = case tree of
     TypedIntermediate (TypedIntermediateTree t constraints children) -> case traverse (preview _Typed) childInferResults of
         Just typeTrees -> (finalSubst, inferResult) where
-            (finalSubst, maybeConstraintError) = foldl constraintReducer (substAfterSolvingChildren, Nothing) constraints
-            constraintReducer (s0, maybeError) (Constraint errorMsg t1 t2) = case unify (apply s0 t1) (apply s0 t2) of
-                Just s1 -> (compose s1 s0, maybeError)
-                Nothing -> (s0, Just errorMsg)
+            (finalSubst, maybeConstraintError) = solveConstraints substAfterSolvingChildren constraints
             inferResult = case maybeConstraintError of
                 Just e -> Untyped $ TypeError e childInferResults
                 Nothing -> Typed $ TypeTree t typeTrees
@@ -199,6 +196,13 @@ solve' initialSubst tree = case tree of
             (subst, reversedChildInferResults) = foldl childrenReducer (initialSubst, []) children
             childrenReducer (s0, reversedInferResults) child = (: reversedInferResults) <$> solve' s0 child
             childInferResults = reverse reversedChildInferResults
+
+solveConstraints :: Eq d => Substitution d -> [Constraint d] -> (Substitution d, Maybe ErrorMsg)
+solveConstraints s0 constraints = case constraints of
+    [] -> (s0, Nothing)
+    Constraint errorMsg t1 t2 : restOfConstraints -> case unify (apply s0 t1) (apply s0 t2) of
+        Just s1 -> solveConstraints (compose s1 s0) restOfConstraints
+        Nothing -> (s0, Just errorMsg)
 
 compose :: Substitution d -> Substitution d -> Substitution d
 compose s1 s2 = Map.map (apply s1) s2 `Map.union` s1
