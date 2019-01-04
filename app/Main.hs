@@ -201,9 +201,11 @@ draw appState = case getLocation appState of
     ExprDefView location -> drawExprDefView appState location
 
 drawDefListView :: AppState -> Maybe SelectedDefKey -> [AppWidget]
-drawDefListView appState maybeSelectedDefKey = [ renderTitle (str "Definitions") <=> renderedList ] where
-    renderedList = toGray $ vBox $ renderItem <$> getDefKeys appState
-    renderItem key = highlightIf (Just key == maybeSelectedDefKey) (str $ getDefName appState key)
+drawDefListView appState maybeSelectedDefKey = [ title <=> body ] where
+    title = renderTitle (str "Definitions")
+    body = viewport Viewport Both list
+    list = toGray $ vBox $ renderItem <$> getDefKeys appState
+    renderItem key = (if Just key == maybeSelectedDefKey then visible . highlight else id) (str $ getDefName appState key)
 
 getDefName :: AppState -> DefKey -> Name
 getDefName appState key = case key of
