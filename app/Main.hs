@@ -94,7 +94,8 @@ type Value = V.Value DataConstructorKey
 type InferResult = Infer.InferResult TypeDefKey
 type TypeTree = Infer.TypeTree TypeDefKey
 type TypeError = Infer.TypeError TypeDefKey
-data AppResourceName = DefListName | EditorName | AutocompleteName | Viewport deriving (Eq, Ord, Show)
+data AppResourceName = EditorName | AutocompleteName | DefListViewport | TypeDefViewport | ExprDefViewport
+    deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
 data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
 data Location = DefListView (Maybe SelectedDefKey) | TypeDefView TypeDefViewLocation | ExprDefView ExprDefViewLocation
@@ -203,7 +204,7 @@ draw appState = case getLocation appState of
 drawDefListView :: AppState -> Maybe SelectedDefKey -> [AppWidget]
 drawDefListView appState maybeSelectedDefKey = [ title <=> body ] where
     title = renderTitle (str "Definitions")
-    body = viewport Viewport Both list
+    body = viewport DefListViewport Both list
     list = toGray $ vBox $ renderItem <$> getDefKeys appState
     renderItem key = (if Just key == maybeSelectedDefKey then visible . highlight else id) (str $ getDefName appState key)
 
@@ -252,10 +253,10 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
                 selection == TypeConstructorSelection Nothing || selection == TypeConstructorSelection (Just index)
     typeName = getTypeName appState typeDefKey
     typeConstructorParams = view T.typeConstructorParams typeConstructor
-    body = vBox renderedDataConstructors
+    body = viewport TypeDefViewport Both $ vBox renderedDataConstructors
     renderedDataConstructors = zipWith renderDataConstructor [0..] dataConstructors
-    renderDataConstructor dataConstructorIndex (T.DataConstructor name paramTypes) = highlightIf
-        (selection == DataConstructorSelection dataConstructorIndex [])
+    renderDataConstructor dataConstructorIndex (T.DataConstructor name paramTypes) =
+        (if selection == DataConstructorSelection dataConstructorIndex [] then visible . highlight else id)
         (snd $ foldl (renderCall $ appState ^. wrappingStyle) (OneWord, renderedName) renderedParamTypes)
         where
             renderedName = case view editState appState of
@@ -309,7 +310,7 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
             autocompleteLayer = renderAutocomplete autocompleteList printItem editorExtent
             printItem = printAutocompleteItem (getExprName appState)
         _ -> [ mainLayer ]
-    mainLayer = renderedTitle <=> viewport Viewport Both coloredExpr <=> str bottomStr
+    mainLayer = renderedTitle <=> viewport ExprDefViewport Both coloredExpr <=> str bottomStr
     renderedTitle = case editState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ str $ getExprName appState defKey
