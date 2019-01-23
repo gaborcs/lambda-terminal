@@ -14,6 +14,7 @@ import Data.List.HT (viewR)
 import Data.Maybe
 import Data.Text.Zipper
 import System.Environment
+import System.Exit
 import System.IO.Error
 import System.Timeout
 import Text.Read
@@ -153,36 +154,37 @@ getInitialState = do
     return $ AppState typeDefs exprDefs locationHistory NoParens clipboard NotEditing Nothing Nothing
 
 readTypeDefs :: IO (Map.Map TypeDefKey TypeDef)
-readTypeDefs = do
-    path <- getTypeDefsPath
-    content <- readFile path
-    return $ Map.fromList $ read <$> lines content
+readTypeDefs = getTypeDefsPath >>= readDefs
+
+readExprDefs :: IO (Map.Map ExprDefKey ExprDef)
+readExprDefs = getExprDefsPath >>= readDefs
+
+readDefs :: (Read k, Read d, Ord k) => FilePath -> IO (Map.Map k d)
+readDefs filePath = do
+    content <- readFile filePath
+    case traverse readMaybe $ lines content of
+        Just typeDefs -> return $ Map.fromList typeDefs
+        Nothing -> die "Codebase is invalid"
 
 writeTypeDefs :: AppState -> IO ()
-writeTypeDefs appState = do
-    path <- getTypeDefsPath
-    writeFile path $ unlines $ map show $ Map.toList $ view present <$> view committedTypeDefs appState
-
-readExprDefs :: IO (Map.Map TypeDefKey ExprDef)
-readExprDefs = do
-    path <- getExprDefsPath
-    content <- readFile path
-    return $ Map.fromList $ read <$> lines content
+writeTypeDefs appState = getTypeDefsPath >>= writeDefs (view committedTypeDefs appState)
 
 writeExprDefs :: AppState -> IO ()
-writeExprDefs appState = do
-    path <- getExprDefsPath
-    writeFile path $ unlines $ map show $ Map.toList $ view present <$> view committedExprDefs appState
+writeExprDefs appState = getExprDefsPath >>= writeDefs (view committedExprDefs appState)
+
+writeDefs :: (Show k, Show d) => Map.Map k (History d) -> FilePath -> IO ()
+writeDefs committedDefs filePath = writeFile filePath $ unlines $ map show $ Map.toList $ view present <$> committedDefs
 
 getTypeDefsPath :: IO FilePath
-getTypeDefsPath = do
-    maybeProjectPath <- getProjectPath
-    return $ fromMaybe "" maybeProjectPath ++ "type-defs"
+getTypeDefsPath = getFullPath "type-defs"
 
 getExprDefsPath :: IO FilePath
-getExprDefsPath = do
+getExprDefsPath = getFullPath "expr-defs"
+
+getFullPath :: FilePath -> IO FilePath
+getFullPath relativePath = do
     maybeProjectPath <- getProjectPath
-    return $ fromMaybe "" maybeProjectPath ++ "expr-defs"
+    return $ fromMaybe "" maybeProjectPath ++ relativePath
 
 getProjectPath :: IO (Maybe FilePath)
 getProjectPath = listToMaybe <$> getArgs
