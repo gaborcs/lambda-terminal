@@ -10,7 +10,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Data.Char
 import Data.List
-import Data.List.HT (viewR, maybePrefixOf, maybeSuffixOf)
+import Data.List.HT (viewR)
 import Data.Maybe
 import Data.Text.Zipper
 import System.Environment
@@ -1060,7 +1060,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 newExpr = modifyAtPathInExpr path (const E.Hole) (const P.Wildcard) editedExpr
             _ | isValidVarName editorContent -> commitEdit path furtherPathsToBeEdited newExpr where
                 newExpr = modifyAtPathInExpr path (const $ E.Var editorContent) (const $ P.Var editorContent) editedExpr
-            _ -> case maybePrefixOf "\"" editorContent >>= maybeSuffixOf "\"" of
+            _ -> case readMaybe editorContent of
                 Just s -> commitEdit path furtherPathsToBeEdited newExpr where
                     newExpr = modifyAtPathInExpr path (const $ E.String s) (const $ P.String s) editedExpr
                 _ -> continue appState
