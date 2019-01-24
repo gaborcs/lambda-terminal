@@ -11,6 +11,7 @@ prettyPrintValue getName value = case value of
         printedChildren <- traverse printChild children
         return $ unwords $ getName key : printedChildren
     V.Integer n -> Just $ show n
+    V.String s -> Just $ show s
 
 inParensIf :: Bool -> String -> String
 inParensIf cond s = if cond then "(" ++ s ++ ")" else s

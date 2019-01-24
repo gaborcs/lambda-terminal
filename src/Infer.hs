@@ -117,6 +117,7 @@ infer instantiateConstructorType defs env expr = case expr of
             return $ TypedIntermediate $ TypedIntermediateTree t [] []
         Nothing -> return $ UntypedIntermediate "Data constructor isn't defined" []
     E.Integer _ -> return $ TypedIntermediate $ TypedIntermediateTree T.Integer [] []
+    E.String _ -> return $ TypedIntermediate $ TypedIntermediateTree T.String [] []
     E.Primitive p -> do
         t <- instantiate (getType p :: T.Type TVarId d)
         return $ TypedIntermediate $ TypedIntermediateTree t [] []
@@ -156,6 +157,7 @@ inferPattern instantiateConstructorType patt = case patt of
                 Nothing -> return (UntypedIntermediate "Child doesn't typecheck" childTrees, typeEnv)
             Nothing -> return (UntypedIntermediate "Data constructor isn't defined" childTrees, typeEnv)
     P.Integer _ -> return (TypedIntermediate $ TypedIntermediateTree T.Integer [] [], Map.empty)
+    P.String _ -> return (TypedIntermediate $ TypedIntermediateTree T.String [] [], Map.empty)
 
 freshTVar :: Infer (T.Type TVarId d)
 freshTVar = do
@@ -221,6 +223,7 @@ unify t1 t2 = case (t1, t2) of
     (T.Constructor tDef1, T.Constructor tDef2) -> if tDef1 == tDef2 then Just Map.empty else Nothing
     (T.Fn, T.Fn) -> Just Map.empty
     (T.Integer, T.Integer) -> Just Map.empty
+    (T.String, T.String) -> Just Map.empty
     _ -> Nothing
 
 bind :: TVarId -> T.Type TVarId d -> Either InfiniteType (Substitution d)

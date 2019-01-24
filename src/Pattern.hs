@@ -10,6 +10,7 @@ data Pattern constructorKey
     | Var VarName
     | Constructor constructorKey [Pattern constructorKey]
     | Integer Integer
+    | String String
     deriving (Eq, Read, Show, Functor)
 
 renameVar :: VarName -> VarName -> Pattern c -> Pattern c

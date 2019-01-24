@@ -16,6 +16,7 @@ data Expr defKey constructorKey
     | Call (Expr defKey constructorKey) (Expr defKey constructorKey)
     | Constructor constructorKey
     | Integer Integer
+    | String String
     | Primitive Primitive
     deriving (Eq, Read, Show)
 

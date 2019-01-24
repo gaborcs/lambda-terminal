@@ -26,6 +26,7 @@ eval' env defs expr = case expr of
             _ -> Nothing
     E.Constructor key -> Just $ V.Constructor key []
     E.Integer n -> Just $ V.Integer n
+    E.String s -> Just $ V.String s
     E.Primitive p -> Just $ getValue p
     where
         evalPatternMatching alts maybeArgVal = foldr f Nothing alts where
@@ -43,4 +44,7 @@ match maybeValue patt = case patt of
         _ -> Nothing
     P.Integer n -> case maybeValue of
         Just (V.Integer m) | n == m -> Just Map.empty
+        _ -> Nothing
+    P.String s1 -> case maybeValue of
+        Just (V.String s2) | s1 == s2 -> Just Map.empty
         _ -> Nothing

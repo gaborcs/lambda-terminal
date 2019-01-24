@@ -15,4 +15,5 @@ data Value constructorKey
     = Fn (Maybe (Value constructorKey) -> Maybe (Value constructorKey))
     | Constructor constructorKey [Maybe (Value constructorKey)]
     | Integer Integer
+    | String String
     deriving (Generic, NFData)

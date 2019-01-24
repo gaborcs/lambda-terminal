@@ -12,6 +12,7 @@ prettyPrintType getTypeName t = case t of
     T.Constructor typeDefKey -> getTypeName typeDefKey
     T.Fn -> "λ"
     T.Integer -> "Integer"
+    T.String -> "String"
     where print = prettyPrintType getTypeName
 
 defaultTypeVarNames :: [String]

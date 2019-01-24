@@ -10,7 +10,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Data.Char
 import Data.List
-import Data.List.HT (viewR)
+import Data.List.HT (viewR, maybePrefixOf, maybeSuffixOf)
 import Data.Maybe
 import Data.Text.Zipper
 import System.Environment
@@ -289,6 +289,7 @@ renderType appState t wrappingStyle (RenderChild renderChild) = case t of
     T.Constructor typeDefKey -> (OneWord, str $ getTypeName appState typeDefKey)
     T.Fn -> (OneWord, str "λ")
     T.Integer -> (OneWord, str "Integer")
+    T.String -> (OneWord, str "String")
 
 insertAt :: Int -> a -> [a] -> [a]
 insertAt index item = (!! index) . iterate _tail %~ (item :)
@@ -383,6 +384,7 @@ renderExpr appState expr wrappingStyle (RenderChild renderChild) = case expr of
             argResult@(argResultType, renderedArg) = renderChild 1 $ renderExpr appState arg
     E.Constructor key -> (OneWord, str $ view T.constructorName key)
     E.Integer n -> (OneWord, str $ show n)
+    E.String s -> (OneLine, str $ show s)
     E.Primitive p -> (OneWord, str $ getDisplayName p)
 
 renderCall :: WrappingStyle -> RenderResult -> RenderResult -> RenderResult
@@ -419,6 +421,7 @@ renderPattern patt _ (RenderChild renderChild) = case patt of
         addParensIfNeeded (resultType, renderedChild) = inParensIf (resultType /= OneWord) renderedChild
         childRenderers = renderPattern <$> children
     P.Integer n -> (OneWord, str $ show n)
+    P.String s -> (OneWord, str $ show s)
 
 indent :: Widget n -> Widget n
 indent w = str "  " <+> w
@@ -1057,7 +1060,10 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 newExpr = modifyAtPathInExpr path (const E.Hole) (const P.Wildcard) editedExpr
             _ | isValidVarName editorContent -> commitEdit path furtherPathsToBeEdited newExpr where
                 newExpr = modifyAtPathInExpr path (const $ E.Var editorContent) (const $ P.Var editorContent) editedExpr
-            _ -> continue appState
+            _ -> case maybePrefixOf "\"" editorContent >>= maybeSuffixOf "\"" of
+                Just s -> commitEdit path furtherPathsToBeEdited newExpr where
+                    newExpr = modifyAtPathInExpr path (const $ E.String s) (const $ P.String s) editedExpr
+                _ -> continue appState
         commitAutocompleteSelection editedExpr (path NonEmpty.:| furtherPathsToBeEdited) autocompleteList =
             case ListWidget.listSelectedElement autocompleteList of
                 Just (_, selectedItem) -> case selectedItem of
@@ -1288,10 +1294,12 @@ printAutocompleteItem getExprName item = case item of
     Expr (E.Var name) -> name
     Expr (E.Constructor key) -> view T.constructorName key
     Expr (E.Integer n) -> show n
+    Expr (E.String s) -> show s
     Expr (E.Primitive p) -> getDisplayName p
     Pattern (P.Var name) -> name
     Pattern (P.Constructor key _) -> view T.constructorName key
     Pattern (P.Integer n) -> show n
+    Pattern (P.String s) -> show s
     _ -> ""
 
 getVarsAtPath :: Path -> E.Expr d c -> [E.VarName]

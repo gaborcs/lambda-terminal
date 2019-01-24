@@ -36,6 +36,9 @@ getDiffPathBetweenTypes t1 t2 = case t1 of
     T.Integer -> case t2 of
         T.Integer -> Nothing
         _ -> Just []
+    T.String -> case t2 of
+        T.String -> Nothing
+        _ -> Just []
 
 getDiffPathBetweenExprs :: (Eq c, Eq d) => E.Expr d c -> E.Expr d c -> Maybe Path
 getDiffPathBetweenExprs e1 e2 = case e1 of
@@ -62,6 +65,9 @@ getDiffPathBetweenExprs e1 e2 = case e1 of
     E.Integer n1 -> case e2 of
         E.Integer n2 | n1 == n2 -> Nothing
         _ -> Just []
+    E.String s1 -> case e2 of
+        E.String s2 | s1 == s2 -> Nothing
+        _ -> Just []
     E.Primitive p1 -> case e2 of
         E.Primitive p2 | p1 == p2 -> Nothing
         _ -> Just []
@@ -80,6 +86,9 @@ getDiffPathBetweenPatterns p1 p2 = case p1 of
         _ -> Just []
     P.Integer n1 -> case p2 of
         P.Integer n2 | n1 == n2 -> Nothing
+        _ -> Just []
+    P.String s1 -> case p2 of
+        P.String s2 | s1 == s2 -> Nothing
         _ -> Just []
 
 useChildDiffPaths :: [Maybe Path] -> Maybe Path

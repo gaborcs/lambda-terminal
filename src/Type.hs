@@ -17,6 +17,7 @@ data Type typeVarKey typeDefKey
     | Constructor typeDefKey
     | Fn
     | Integer
+    | String
     deriving (Eq, Read, Show, Functor)
 
 data TypeDef typeDefKey = TypeDef
@@ -56,6 +57,7 @@ getTypeVars t = case t of
     Constructor _ -> []
     Fn -> []
     Integer -> []
+    String -> []
 
 mapTypeVars :: (v1 -> Type v2 d) -> Type v1 d -> Type v2 d
 mapTypeVars f t = case t of
@@ -65,6 +67,7 @@ mapTypeVars f t = case t of
     Constructor name -> Constructor name
     Fn -> Fn
     Integer -> Integer
+    String -> String
 
 getTypeVarsInTypeDef :: TypeDef d -> [VarName]
 getTypeVarsInTypeDef def = nub $
