@@ -937,6 +937,8 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         Vty.EvKey Vty.KEsc [] -> cancelEdit appState
         Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) (commitAutocompleteSelection editedExpr pathsToBeEdited) maybeAutocompleteList
         Vty.EvKey Vty.KEnter [] -> commitEditorContent editedExpr pathsToBeEdited editorContent
+        Vty.EvKey (Vty.KChar c) [] | (c == 'λ' || c == '\\') && editorContent == "" ->
+            editExprContainingSelection (const $ E.Fn $ pure (P.Wildcard, E.Hole)) ([0] NonEmpty.:| [[1]])
         _ -> do
             newEditor <- case event of
                 Vty.EvKey (Vty.KChar '"') [] -> pure $ applyEdit edit editor where
@@ -946,16 +948,13 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                         | otherwise = insertChar '"' textZipper
                 _ -> handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
-            if newEditorContent == "λ" || newEditorContent == "\\"
-            then editExprContainingSelection (const $ E.Fn $ pure (P.Wildcard, E.Hole)) ([0] NonEmpty.:| [[1]])
-            else do
-                let editorContentChanged = newEditorContent /= editorContent
-                let isMatch item = printAutocompleteItem getCurrentExprName item `containsIgnoringCase` newEditorContent
-                let items = Vec.fromList $ filter isMatch autocompleteItems
-                newAutocompleteList <- case maybeAutocompleteList of
-                    Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
-                    _ -> pure $ if null items then Nothing else Just $ ListWidget.list AutocompleteName items 1
-                setEditState appState $ EditingExpr editedExpr pathsToBeEdited newEditor newAutocompleteList
+            let editorContentChanged = newEditorContent /= editorContent
+            let isMatch item = printAutocompleteItem getCurrentExprName item `containsIgnoringCase` newEditorContent
+            let items = Vec.fromList $ filter isMatch autocompleteItems
+            newAutocompleteList <- case maybeAutocompleteList of
+                Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
+                _ -> pure $ if null items then Nothing else Just $ ListWidget.list AutocompleteName items 1
+            setEditState appState $ EditingExpr editedExpr pathsToBeEdited newEditor newAutocompleteList
         where
             editorContent = head $ getEditContents editor
             autocompleteItems = case selected of
