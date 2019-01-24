@@ -938,7 +938,13 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         Vty.EvKey (Vty.KChar '\t') [] -> maybe (continue appState) (commitAutocompleteSelection editedExpr pathsToBeEdited) maybeAutocompleteList
         Vty.EvKey Vty.KEnter [] -> commitEditorContent editedExpr pathsToBeEdited editorContent
         _ -> do
-            newEditor <- handleEditorEventIgnoringAutocompleteControls event editor
+            newEditor <- case event of
+                Vty.EvKey (Vty.KChar '"') [] -> pure $ applyEdit edit editor where
+                    edit textZipper
+                        | editorContent == "" = moveLeft $ insertMany "\"\"" textZipper
+                        | currentChar textZipper == Just '"' && previousChar textZipper /= Just '\\' = moveRight textZipper
+                        | otherwise = insertChar '"' textZipper
+                _ -> handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
             if newEditorContent == "λ" || newEditorContent == "\\"
             then editExprContainingSelection (const $ E.Fn $ pure (P.Wildcard, E.Hole)) ([0] NonEmpty.:| [[1]])
