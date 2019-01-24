@@ -634,20 +634,18 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
             | isValidTypeVarName editorContent ->
                 commit (T.Var editorContent)
             | otherwise -> continue appState
+        Vty.EvKey (Vty.KChar c) [] | (c == 'λ' || c == '\\') && editorContent == "" -> commit T.Fn
         _ -> do
             newEditor <- handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
-            if newEditorContent == "λ" || newEditorContent == "\\"
-            then commit T.Fn
-            else do
-                let editorContentChanged = newEditorContent /= editorContent
-                let isMatch typeDefKey = prettyPrintType (getTypeName appState) typeDefKey `containsIgnoringCase` newEditorContent
-                let items = Vec.fromList $ filter isMatch autocompleteItems
-                newAutocompleteList <- case maybeAutocompleteList of
-                    Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
-                    _ -> pure $ if null items then Nothing else Just $ ListWidget.list AutocompleteName items 1
-                setEditState appState $
-                    EditingDataConstructorParam dataConstructorIndex dataConstructor paramIndex path newEditor newAutocompleteList
+            let editorContentChanged = newEditorContent /= editorContent
+            let isMatch typeDefKey = prettyPrintType (getTypeName appState) typeDefKey `containsIgnoringCase` newEditorContent
+            let items = Vec.fromList $ filter isMatch autocompleteItems
+            newAutocompleteList <- case maybeAutocompleteList of
+                Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
+                _ -> pure $ if null items then Nothing else Just $ ListWidget.list AutocompleteName items 1
+            setEditState appState $
+                EditingDataConstructorParam dataConstructorIndex dataConstructor paramIndex path newEditor newAutocompleteList
         where
             editorContent = head $ getEditContents editor
             commit = commitDataConstructorEdit appState typeDefKey dataConstructorIndex dataConstructor paramIndex path
