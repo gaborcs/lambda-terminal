@@ -120,7 +120,7 @@ data ExprDefViewLocation = ExprDefViewLocation
     , _exprDefViewSelection :: Path
     }
 type EditorState = Editor String AppResourceName
-type AutocompleteList = ListWidget.List AppResourceName
+type AutocompleteList e = ListWidget.List AppResourceName e
 data EvalResult = Timeout | Error | Value Value
 data Selectable = Expr Expr | Pattern Pattern deriving Eq
 newtype RenderChild = RenderChild (ChildIndex -> Renderer -> RenderResult)
