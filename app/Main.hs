@@ -384,7 +384,7 @@ renderExpr appState expr wrappingStyle (RenderChild renderChild) = case expr of
             argResult@(argResultType, renderedArg) = renderChild 1 $ renderExpr appState arg
     E.Constructor key -> (OneWord, str $ view T.constructorName key)
     E.Integer n -> (OneWord, str $ show n)
-    E.String s -> (OneLine, str $ show s)
+    E.String s -> (OneWord, str $ show s)
     E.Primitive p -> (OneWord, str $ getDisplayName p)
 
 renderCall :: WrappingStyle -> RenderResult -> RenderResult -> RenderResult
