@@ -944,6 +944,8 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                         | editorContent == "" = moveLeft $ insertMany "\"\"" textZipper
                         | currentChar textZipper == Just '"' && previousChar textZipper /= Just '\\' = moveRight textZipper
                         | otherwise = insertChar '"' textZipper
+                Vty.EvKey (Vty.KChar ' ') [] ->
+                    pure $ if "\"" `isPrefixOf` editorContent then applyEdit (insertChar ' ') editor else editor
                 _ -> handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
             let editorContentChanged = newEditorContent /= editorContent
