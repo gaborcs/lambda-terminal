@@ -10,7 +10,7 @@ data Primitive
     | Minus
     | Times
     | Signum
-    | Append
+    | Concat
     deriving (Eq, Read, Show, Bounded, Enum)
 
 getDisplayName :: Primitive -> String
@@ -19,7 +19,7 @@ getDisplayName p = case p of
     Minus -> "-"
     Times -> "*"
     Signum -> "signum"
-    Append -> "append"
+    Concat -> "concat"
 
 getType :: Primitive -> T.Type v d
 getType p = case p of
@@ -27,7 +27,7 @@ getType p = case p of
     Minus -> binaryIntegerOpType T.Integer
     Times -> binaryIntegerOpType T.Integer
     Signum -> T.fn T.Integer T.Integer
-    Append -> T.fn T.String (T.fn T.String T.String)
+    Concat -> T.fn T.String (T.fn T.String T.String)
 
 getValue :: Primitive -> V.Value c
 getValue p = case p of
@@ -37,7 +37,7 @@ getValue p = case p of
     Signum -> V.Fn $ \case
         Just (V.Integer a) -> Just $ V.Integer $ signum a
         _ -> Nothing
-    Append -> twoParamFnVal $ \case
+    Concat -> twoParamFnVal $ \case
         (Just (V.String s1), Just (V.String s2)) -> Just $ V.String $ s1 ++ s2
         _ -> Nothing
 
