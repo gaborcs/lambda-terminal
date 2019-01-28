@@ -19,7 +19,7 @@ It's called Lambda Terminal because it runs in the terminal.
 ### Why does it run in the terminal?
 
 The terminal allows us to optimize our interface for keyboard input without worrying about other input methods.
-While relying exclusively on keyboard input makes your learning curve steeper, it leads to significant productivity gains once you get the hang of it, since you don't have to move your hand between the mouse and keyboard all the time.
+While relying exclusively on keyboard input makes your learning curve steeper, it can lead to significant productivity gains once you get the hang of it, since you don't have to move your hand between the mouse and keyboard all the time.
 
 With that said, a well-designed graphical UI would certainly have benefits.
 It could add support for mouse and possibly even touch input while keeping the terminal version's efficient keyboard controls.
@@ -59,42 +59,70 @@ A typed hole is an expression that typechecks as any type but cannot be evaluate
 It is useful as a placeholder for code that is not written yet.
 
 Let's replace the typed hole with something that can be evaluated.
-Press `e` to edit the hole, type `42` and press `Enter`.
+Press `e` to edit the hole, type `"Hello, World"` and press `Enter`.
 Congratulations, you've just written your first Lambda expression that can be evaluated.
-You might notice `42: Integer` at the bottom of the terminal.
+You might notice `"Hello, World": String` at the bottom of the terminal.
 The part before the colon is the result of evaluating the expression.
-Evaluating `42` results in `42`.
+Evaluating `"Hello, World"` results in `"Hello, World"`.
 Shocking, I know.
 The part after the colon shows the type of the expression.
-`42` has type `Integer`.
+`"Hello, World"` has type `String`.
 
-So what can we do with 42?
-We can apply functions to it.
-We'll start with a simple one.
-Press `(`, start writing `signum` and press `Tab` when it's selected in the autocomplete.
-Pressing `Enter` instead of `Tab` won't work, since it would refer to a variable named signum, which isn't available here.
+As a quick practice of editing, try replacing "`World`" with "`Lambda`".
+You can edit the expression by pressing `e`, just as we did previously.
+If you succeed, you'll see the bottom of the terminal reflect the changes.
+
+## `greet`
+
+Since we're already in the business of greetings, we'll take a look at functions by writing a function that can greet whoever we want.
+The function will take a `String` and return a new `String` that is the result of concatenating `"Hello, "` with the argument.
+
+To concatenate strings we can use the `concat` function.
+Press `d` to delete our previous greeting, then press `e` to edit, start writing `concat` and press `Tab` when it's selected.
+Pressing `Enter` instead of `Tab` won't work, since it would refer to a variable named concat, which isn't available here.
 In case you mess it up, you can always press `e` to edit it or `u` to undo whatever you did (you can redo it by pressing `r`).
-So when you're done you should see `signum 42`, which means the `signum` function is called with `42`.
-You might also notice that `signum` is now highlighted compared to `42`, which means it is selected.
-If your terminal's text color is gray, it might be hard to see which part is highlighted.
-In this case, please consider adjusting your terminal's colors.
-At the bottom you'll see the type of the selected expression, `λ Integer Integer`.
-Whoa, there's a lambda!
-`λ` is the type constructor for functions.
-`λ Integer Integer` is the type of functions that take an `Integer` and return an `Integer`.
+When you're done you should have a reference to the `concat` function.
 
-So `signum` takes an `Integer` and returns an `Integer`.
-That means `signum 42` should be an `Integer`.
-Let's verify that by selecting it.
+At the bottom of the terminal you should see the type of the `concat` function: `λ String (λ String String)`.
+Whoa, lambdas!
+`λ` is the type constructor for functions.
+`λ String (λ String String)` is the type of functions that take a `String` and return a function that takes a `String` and returns a `String`.
+`concat` takes a string and returns a function that takes another string and returns the concatenation of the two strings.
+Functions in Lambda cannot take multiple arguments the way functions in most other languages can, so this trick is used instead.
+It's called currying.
+
+Currying makes it really convenient to do what we're trying to achieve now.
+By applying `concat` to `"Hello, "`, we get a function that concatenates `"Hello, "` with the argument it receives, which is exactly the function we want.
+
+Press `)`, then type `"Hello, "` and press `Enter`.
+You should see `concat "Hello, "`, which means `concat` is applied to `"Hello, "`.
+
+You might notice that `"Hello, "` is now highlighted compared to `concat`.
+That means it is selected.
+
+Note: If your terminal's text color is gray, it might be hard to see which part is highlighted.
+In this case, please consider adjusting your terminal's colors.
+
+The bottom of the terminal shows the type and possibly the result of evaluating the selected expression.
+Since the current selection is `"Hello, "` it shows `"Hello, ": String`.
+To check the type of `concat "Hello, "`, you need to select it.
+
 Selection can be moved using either the arrow keys or the `ijkl` keys.
 The `ijkl` keys work the same way as the arrow keys, but they are in a more convenient place if you're a touch typist.
-Use the left arrow or the `j` key to select `signum`'s parent expression, `signum 42`.
+Use the left arrow or the `j` key to select the parent expression of `"Hello, "`, which is `concat "Hello, "`.
 You can use the right arrow or `l` to select a child expression, the up arrow or `i` to select the previous sibling and the down arrow or `k` to select the next sibling.
-These controls might be weird at first, but don't worry, you'll get used to them.
+These controls might be weird at first, but you get used to them with practice.
 
-As you select `signum 42`, you'll see that the result of evaluating it is `1` and its type is `Integer`, as we expected.
-`signum` returns `1` for all positive integers, `0` for `0`, and `-1` for all negative integers.
-Check it out for a couple of values by selecting `42`, pressing `e` to edit it, and moving the selection back to the root once you've inserted your desired number.
+As you select `concat "Hello, "`, you'll see that it has type `λ String String`, which is what we expected.
+
+Let's name our function `greet`.
+Press `N`, type `greet`, then press `Enter`.
+Now we can use it from other expressions.
+Press `o` to open a new expression definition, then press `e`, type `greet` and press `Tab`.
+Call `greet` by pressing `)` and typing your name between `"` marks.
+If you now select the whole expression using the usual selection movement keys, you should see a well-deserved personal greeting.
+
+To practice editing and convince yourself that `greet` works well for all names, you could try replacing your name with different names.
 
 ## Arithmetic expressions
 
@@ -103,12 +131,8 @@ Delete everything to get a clean slate by pressing `d` (multiple times if needed
 Press `e` to edit the typed hole that remains, type `+` and press `Tab`.
 You should see that `+` has type `λ Integer (λ Integer Integer)`.
 It's a function that takes an `Integer` and returns a function that takes an `Integer` and returns an `Integer`.
-Functions in Lambda cannot take multiple arguments the way functions in most other languages can, so this trick is used instead.
-It's called currying.
 
 Time to use `+` for something.
-Remember how we used `(` to apply a function (`signum`) to the selected value (`42`)?
-This time we'll do the opposite, we'll call the selected function (`+`) with a value (`1`).
 Press `)`, then type `1` and press `Enter`.
 You should get `+ 1`, and if you select all of it, you'll see that it's type is `λ Integer Integer`.
 This is a function that returns its argument incremented by `1`.
@@ -134,8 +158,11 @@ Or, if we use the default wrapping style, the parentheses will be replaced by wr
   * 2 3
 ```
 Let's input that expression now.
-If you already have `+ 1 2`, then you should select `2`, apply `*` to it, then select `* 2` and call it with `3`.
-When you're done you can select the whole expression and see that the result of evaluating it is 7.
+If you already have `+ 1 2`, the easiest way is to select `2`, apply `*` to it, then select `* 2` and call it with `3`.
+By now you should be able to do all of these steps except for applying `*` to the selection.
+You can apply a function to the selection similarly to how you make a call to the selected function with an argument, the difference is that you need to press `(` instead of `)`.
+So if `2` is selected, press `(`, type `*`, then press `Tab`.
+When you're done with all the steps, you can select the whole expression and see that the result of evaluating it is 7.
 
 This would be a good time to try cycling between wrapping styles using `Tab`. It shows that there are multiple ways to render expressions in Lambda.
 It's the renderer's job to render expressions the best way it can, taking into account the user's preferences.
