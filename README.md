@@ -116,7 +116,7 @@ These controls might be weird at first, but you get used to them with practice.
 As you select `concat "Hello, "`, you'll see that it has type `λ String String`, which is what we expected.
 
 Let's name our function `greet`.
-Press `N`, type `greet`, then press `Enter`.
+Press `N` (capital, lowercase `n` is for renaming variables), type `greet`, then press `Enter`.
 Now we can use it from other expressions.
 Press `o` to open a new expression definition, then press `e`, type `greet` and press `Tab`.
 Call `greet` by pressing `)` and typing your name between `"` marks.
@@ -177,7 +177,7 @@ We hope you'll enjoy the exercise.
 Remember that `+ 1` is a function that increments its argument by `1`?
 That actually sounds like a useful function.
 Let's define it as a reusable function.
-Press `o` to open a new expression definition, then press `N` (capital, lowercase `n` is for renaming variables), type `increment` and press `Enter`.
+Press `o` to open a new expression definition, then press `N`, type `increment` and press `Enter`.
 Input `+ 1` the same way we did previously.
 
 We now have an `increment` function that we could use from other definitions.
