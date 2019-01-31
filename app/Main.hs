@@ -25,7 +25,6 @@ import Safe
 import Diff
 import Eval
 import History
-import PrettyPrintType
 import PrettyPrintValue
 import Primitive
 import Util
@@ -234,8 +233,8 @@ drawTypeDefView :: AppState -> TypeDefViewLocation -> [AppWidget]
 drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
     ui = case (view editState appState, view editorExtent appState) of
         (EditingDataConstructorParam _ _ _ _ _ (Just autocompleteList), Just editorExtent) -> [ autocompleteLayer, mainLayer ] where
-            autocompleteLayer = renderAutocomplete autocompleteList printItem editorExtent
-            printItem = prettyPrintType $ getTypeName appState
+            autocompleteLayer = renderAutocomplete autocompleteList renderItem editorExtent
+            renderItem = renderTypeOnOneLine appState
         _ -> [ mainLayer ]
     mainLayer = toGray $ renderedTitle <=> body
     renderedTitle = case view editState appState of
@@ -280,6 +279,9 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
                 _ -> Nothing
     T.TypeDef typeConstructor dataConstructors = getTypeDefs appState Map.! typeDefKey
 
+renderTypeOnOneLine :: AppState -> T.Type T.VarName TypeDefKey -> AppWidget
+renderTypeOnOneLine appState t = snd . renderWithAttrs Parens Nothing NoSelection Nothing $ renderType appState t
+
 renderType :: AppState -> T.Type T.VarName TypeDefKey -> Renderer
 renderType appState t wrappingStyle (RenderChild renderChild) = case t of
     T.Wildcard -> (OneWord, str "_")
@@ -310,10 +312,10 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     AppState _ _ _ wrappingStyle _ editState _ (Just (DerivedState inferResult evalResult)) = appState
     ui = case (editState, view editorExtent appState) of
         (EditingExpr _ _ _ (Just autocompleteList), Just editorExtent) -> [ autocompleteLayer, mainLayer ] where
-            autocompleteLayer = renderAutocomplete autocompleteList printItem editorExtent
-            printItem = printAutocompleteItem (getExprName appState)
+            autocompleteLayer = renderAutocomplete autocompleteList renderItem editorExtent
+            renderItem = str . printAutocompleteItem (getExprName appState)
         _ -> [ mainLayer ]
-    mainLayer = renderedTitle <=> viewport ExprDefViewport Both coloredExpr <=> str bottomStr
+    mainLayer = renderedTitle <=> viewport ExprDefViewport Both coloredExpr <=> bottomStr
     renderedTitle = case editState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ str $ getExprName appState defKey
@@ -328,18 +330,24 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     maybeTypeError = preview Infer._Untyped inferResult
     maybeSelectionType = getTypeAtPathInInferResult selectionPath inferResult
     bottomStr = case maybeSelectionType of
-        Right t -> evalStr ++ ": " ++ prettyPrintType (getTypeName appState) (T.mapTypeVars (fmap T.Var defaultTypeVarNames !!) t)
-        Left errorMsg -> errorMsg
+        Right t -> str evalStr <+> str ": " <+> renderTypeOnOneLine appState (nameTypeVars t)
+        Left errorMsg -> str errorMsg
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
         Error -> ""
         Value v -> fromMaybe "" $ prettyPrintValue (view T.constructorName) v
 
+nameTypeVars :: T.Type Infer.TVarId d -> T.Type T.VarName d
+nameTypeVars = T.mapTypeVars (fmap T.Var defaultTypeVarNames !!)
+
+defaultTypeVarNames :: [String]
+defaultTypeVarNames = [1..] >>= flip replicateM ['a'..'z']
+
 renderTitle :: Widget n -> Widget n
 renderTitle title = hBorderWithLabel $ str "  " <+> title <+> str "  "
 
-renderAutocompleteItem :: Bool -> String -> Widget n
-renderAutocompleteItem isSelected text = color $ padRight Max $ str text where
+renderAutocompleteItem :: Bool -> Widget n -> Widget n
+renderAutocompleteItem isSelected content = color $ padRight Max content where
     color = modifyDefAttr $
         if isSelected
         then flip Vty.withBackColor Vty.brightCyan . flip Vty.withForeColor black
@@ -639,8 +647,11 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
             newEditor <- handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
             let editorContentChanged = newEditorContent /= editorContent
-            let isMatch typeDefKey = prettyPrintType (getTypeName appState) typeDefKey `containsIgnoringCase` newEditorContent
-            let items = Vec.fromList $ filter isMatch autocompleteItems
+            let isMatch name = name `containsIgnoringCase` newEditorContent
+            let items = Vec.fromList $
+                    filter (isMatch . show) [T.Integer, T.String]
+                    ++ (T.Constructor <$> filter (isMatch . getTypeName appState) typeDefKeys)
+                    ++ (T.Var <$> filter isMatch (T.getTypeVarsInTypeDef def))
             newAutocompleteList <- case maybeAutocompleteList of
                 Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
                 _ -> pure $ if null items then Nothing else Just $ ListWidget.list AutocompleteName items 1
@@ -649,7 +660,6 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
         where
             editorContent = head $ getEditContents editor
             commit = commitDataConstructorEdit appState typeDefKey dataConstructorIndex dataConstructor paramIndex path
-            autocompleteItems = [T.Integer] ++ (T.Constructor <$> typeDefKeys) ++ (T.Var <$> T.getTypeVarsInTypeDef def)
     _ -> continue appState
     where
         defHistory = view committedTypeDefs appState Map.! typeDefKey
@@ -742,8 +752,14 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                 dataConstructor = dataConstructors !! dataConstructorIndex
                 initialEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialEditorContent
                 initialEditorContent = case getItemAtPathInType pathInParam param of
-                    Just (T.Call _ _) -> ""
-                    Just t -> prettyPrintType (getTypeName appState) t
+                    Just t -> case t of
+                        T.Wildcard -> ""
+                        T.Var var -> var
+                        T.Call _ _ -> ""
+                        T.Constructor typeDefKey -> getTypeName appState typeDefKey
+                        T.Fn -> ""
+                        T.Integer -> "Integer"
+                        T.String -> "String"
                     Nothing -> error "invalid path"
                 param = (dataConstructor ^. T.dataConstructorParamTypes) !! paramIndex
         initiateRenameDataConstructor index = setEditState appState initialEditState where
