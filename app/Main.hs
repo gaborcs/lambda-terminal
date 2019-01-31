@@ -300,11 +300,12 @@ renderExpandingSingleLineEditor :: (Ord n, Show n) => Editor String n -> Widget 
 renderExpandingSingleLineEditor editor = hLimit (textWidth editStr + 1) $ renderEditor (str . head) True editor where
     editStr = head $ getEditContents editor
 
-renderAutocomplete autocompleteList printItem editorExtent = translateBy autocompleteOffset autocomplete where
+renderAutocomplete :: (Ord n, Show n) => ListWidget.List n a -> (a -> Widget n) -> Extent n -> Widget n
+renderAutocomplete autocompleteList renderItem editorExtent = translateBy autocompleteOffset autocomplete where
     autocompleteOffset = Brick.Types.Location (editorX, editorY + 1)
     Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
     autocomplete = hLimit 20 $ vLimit (min autocompleteListLength 5) $
-        ListWidget.renderList renderAutocompleteItem True $ printItem <$> autocompleteList
+        ListWidget.renderList renderAutocompleteItem True $ renderItem <$> autocompleteList
     autocompleteListLength = length $ ListWidget.listElements autocompleteList
 
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
