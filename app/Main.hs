@@ -73,7 +73,7 @@ data EditState
         (Maybe (AutocompleteList (T.Type T.VarName TypeDefKey)))
     | RenamingDataConstructorParam T.VarName EditorState
     | SelectionRenaming EditorState
-    | EditingExpr Expr PathsToBeEdited EditorState (Maybe (AutocompleteList Selectable))
+    | EditingExpr Expr PathsToBeEdited EditorState (Maybe (AutocompleteList (Name, Selectable)))
 type DataConstructorIndex = Int
 type ParamIndex = Int
 type PathsToBeEdited = NonEmpty.NonEmpty Path -- the first is the currently edited one
@@ -314,7 +314,7 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     ui = case (editState, view editorExtent appState) of
         (EditingExpr _ _ _ (Just autocompleteList), Just editorExtent) -> [ autocompleteLayer, mainLayer ] where
             autocompleteLayer = renderAutocomplete autocompleteList renderItem editorExtent
-            renderItem = str . printAutocompleteItem (getExprName appState)
+            renderItem = str . fst
         _ -> [ mainLayer ]
     mainLayer = renderedTitle <=> viewport ExprDefViewport Both coloredExpr <=> bottomStr
     renderedTitle = case editState of
@@ -966,33 +966,32 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 _ -> handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
             let editorContentChanged = newEditorContent /= editorContent
-            let isMatch item = printAutocompleteItem getCurrentExprName item `containsIgnoringCase` newEditorContent
-            let items = Vec.fromList $ filter isMatch autocompleteItems
+            let isMatch name = name `containsIgnoringCase` newEditorContent
+            let search getName = mapMaybe $ \item -> let name = getName item in if isMatch name then Just (name, item) else Nothing
+            let items = Vec.fromList $ case selected of
+                    Expr _ -> fmap Expr <$> vars ++ primitives ++ defs ++ constructors where
+                        vars = fmap E.Var <$> search id (getVarsAtPath selectionPath (view expr def))
+                        primitives = fmap E.Primitive <$> search getDisplayName [minBound..]
+                        defs = fmap E.Def <$> search getCurrentExprName exprDefKeys
+                        constructors = fmap E.Constructor <$> search (view T.constructorName) constructorKeys
+                        constructorKeys = typeDefKeys >>= getConstructorKeys
+                        getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
+                        getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
+                        getConstructors typeDefKey = view T.dataConstructors $ currentTypeDefs Map.! typeDefKey
+                    Pattern _ -> do
+                        typeDefKey <- typeDefKeys
+                        (name, T.DataConstructor constructorName paramTypes) <-
+                            search (view T.dataConstructorName) (view T.dataConstructors $ currentTypeDefs Map.! typeDefKey)
+                        let constructorKey = T.DataConstructorKey typeDefKey constructorName
+                        let arity = length paramTypes
+                        let wildcards = replicate arity P.Wildcard
+                        return $ (name, Pattern $ P.Constructor constructorKey wildcards)
             newAutocompleteList <- case maybeAutocompleteList of
                 Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
                 _ -> pure $ if null items then Nothing else Just $ ListWidget.list AutocompleteName items 1
             setEditState appState $ EditingExpr editedExpr pathsToBeEdited newEditor newAutocompleteList
         where
             editorContent = head $ getEditContents editor
-            autocompleteItems = case selected of
-                Expr _ -> map Expr $ vars ++ primitives ++ defs ++ constructors where
-                    vars = E.Var <$> getVarsAtPath selectionPath (view expr def)
-                    primitives = E.Primitive <$> [minBound..]
-                    defs = E.Def <$> exprDefKeys
-                    constructors = E.Constructor <$> constructorKeys
-                    constructorKeys = typeDefKeys >>= getConstructorKeys
-                    getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
-                    getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
-                    getConstructors typeDefKey = view T.dataConstructors $ currentTypeDefs Map.! typeDefKey
-                Pattern _ -> map Pattern constructorPatterns where
-                    constructorPatterns = do
-                        typeDefKey <- typeDefKeys
-                        T.DataConstructor constructorName paramTypes <-
-                            view T.dataConstructors $ currentTypeDefs Map.! typeDefKey
-                        let constructorKey = T.DataConstructorKey typeDefKey constructorName
-                        let arity = length paramTypes
-                        let wildcards = replicate arity P.Wildcard
-                        return $ P.Constructor constructorKey wildcards
             typeDefKeys = getTypeDefKeys appState
     NotEditing -> case event of
         Vty.EvKey Vty.KEnter [] -> goToDefinition
@@ -1070,7 +1069,23 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
             _ -> continue appState
         initiateSelectionEdit = setEditState appState $ EditingExpr (view expr def) (pure selectionPath) initialSelectionEditor Nothing
         initialSelectionEditor = applyEdit gotoEOL $ editor EditorName (Just 1) initialSelectionEditorContent
-        initialSelectionEditorContent = printAutocompleteItem getCurrentExprName selected
+        initialSelectionEditorContent = case selected of
+            Pattern p -> case p of
+                P.Wildcard -> ""
+                P.Var name -> name
+                P.Constructor key _ -> view T.constructorName key
+                P.Integer n -> show n
+                P.String s -> show s
+            Expr e -> case e of
+                E.Hole -> ""
+                E.Def key -> getCurrentExprName key
+                E.Var name -> name
+                E.Fn _ -> ""
+                E.Call _ _ -> ""
+                E.Constructor key -> view T.constructorName key
+                E.Integer n -> show n
+                E.String s -> show s
+                E.Primitive p -> getDisplayName p
         commitSelectionRename editorContent = case selected of
             Pattern (P.Var name) | isValidVarName editorContent -> setExpr $ E.renameVar name editorContent (view expr def)
             Expr (E.Var name) | isValidVarName editorContent -> setExpr $ E.renameVar name editorContent (view expr def)
@@ -1088,7 +1103,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 _ -> continue appState
         commitAutocompleteSelection editedExpr (path NonEmpty.:| furtherPathsToBeEdited) autocompleteList =
             case ListWidget.listSelectedElement autocompleteList of
-                Just (_, selectedItem) -> case selectedItem of
+                Just (_, (_, selectedItem)) -> case selectedItem of
                     Expr expr -> commitEdit path furtherPathsToBeEdited newExpr where
                         newExpr = modifyAtPathInExpr path (const expr) id editedExpr
                     Pattern patt -> commitEdit path (newPathsToBeEdited ++ furtherPathsToBeEdited) newExpr where
@@ -1309,20 +1324,6 @@ modifyTypeDef key modify appState = modifyTypeDefs appState $ ix key %~ History.
 
 modifyExprDef :: ExprDefKey -> (ExprDef -> ExprDef) -> AppState -> EventM AppResourceName (Next AppState)
 modifyExprDef key modify appState = modifyExprDefs appState $ ix key %~ History.step modify
-
-printAutocompleteItem :: (ExprDefKey -> Name) -> Selectable -> String
-printAutocompleteItem getExprName item = case item of
-    Expr (E.Def key) -> getExprName key
-    Expr (E.Var name) -> name
-    Expr (E.Constructor key) -> view T.constructorName key
-    Expr (E.Integer n) -> show n
-    Expr (E.String s) -> show s
-    Expr (E.Primitive p) -> getDisplayName p
-    Pattern (P.Var name) -> name
-    Pattern (P.Constructor key _) -> view T.constructorName key
-    Pattern (P.Integer n) -> show n
-    Pattern (P.String s) -> show s
-    _ -> ""
 
 getVarsAtPath :: Path -> E.Expr d c -> [E.VarName]
 getVarsAtPath path expr = case path of
