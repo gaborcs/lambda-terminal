@@ -1,4 +1,4 @@
-module PrettyPrintValue (prettyPrintValue) where
+module PrettyPrint where
 
 import qualified Value as V
 

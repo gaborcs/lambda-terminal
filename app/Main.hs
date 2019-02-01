@@ -25,7 +25,6 @@ import Safe
 import Diff
 import Eval
 import History
-import PrettyPrintValue
 import Primitive
 import Util
 import qualified Data.Map as Map
@@ -34,6 +33,7 @@ import qualified Data.Vector as Vec
 import qualified Brick.Types
 import qualified Brick.Widgets.List as ListWidget
 import qualified Graphics.Vty as Vty
+import qualified PrettyPrint
 import qualified Expr as E
 import qualified Infer
 import qualified Pattern as P
@@ -293,6 +293,19 @@ renderType appState t wrappingStyle (RenderChild renderChild) = case t of
     T.Integer -> (OneWord, str "Integer")
     T.String -> (OneWord, str "String")
 
+printType :: AppState -> T.Type T.VarName TypeDefKey -> String
+printType appState = snd . print where
+    print t = case t of
+        T.Wildcard -> (OneWord, "_")
+        T.Var name -> (OneWord, name)
+        T.Call callee arg -> (OneLine, calleeResult ++ " " ++ PrettyPrint.inParensIf (argResultType /= OneWord) argResult) where
+            (_, calleeResult) = print callee
+            (argResultType, argResult) = print arg
+        T.Constructor typeDefKey -> (OneWord, getTypeName appState typeDefKey)
+        T.Fn -> (OneWord, "λ")
+        T.Integer -> (OneWord, "Integer")
+        T.String -> (OneWord, "String")
+
 insertAt :: Int -> a -> [a] -> [a]
 insertAt index item = (!! index) . iterate _tail %~ (item :)
 
@@ -304,7 +317,7 @@ renderAutocomplete :: (Ord n, Show n) => ListWidget.List n a -> (a -> Widget n) 
 renderAutocomplete autocompleteList renderItem editorExtent = translateBy autocompleteOffset autocomplete where
     autocompleteOffset = Brick.Types.Location (editorX, editorY + 1)
     Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
-    autocomplete = hLimit 20 $ vLimit (min autocompleteListLength 5) $
+    autocomplete = hLimit 40 $ vLimit (min autocompleteListLength 5) $
         ListWidget.renderList renderAutocompleteItem True $ renderItem <$> autocompleteList
     autocompleteListLength = length $ ListWidget.listElements autocompleteList
 
@@ -336,7 +349,7 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     evalStr = case evalResult of
         Timeout -> "<eval timeout>"
         Error -> ""
-        Value v -> fromMaybe "" $ prettyPrintValue (view T.constructorName) v
+        Value v -> fromMaybe "" $ PrettyPrint.prettyPrintValue (view T.constructorName) v
 
 nameTypeVars :: T.Type Infer.TVarId d -> T.Type T.VarName d
 nameTypeVars = T.mapTypeVars (fmap T.Var defaultTypeVarNames !!)
@@ -961,31 +974,31 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                         | editorContent == "" = moveLeft $ insertMany "\"\"" textZipper
                         | currentChar textZipper == Just '"' && previousChar textZipper /= Just '\\' = moveRight textZipper
                         | otherwise = insertChar '"' textZipper
-                Vty.EvKey (Vty.KChar ' ') [] ->
-                    pure $ if "\"" `isPrefixOf` editorContent then applyEdit (insertChar ' ') editor else editor
+                Vty.EvKey (Vty.KChar ' ') [] -> pure $
+                    if "\"" `isPrefixOf` editorContent || elem ':' editorContent
+                        then applyEdit (insertChar ' ') editor
+                        else editor
+                Vty.EvKey (Vty.KChar '\\') [] -> pure $ applyEdit (insertChar 'λ') editor
                 _ -> handleEditorEventIgnoringAutocompleteControls event editor
             let newEditorContent = head $ getEditContents newEditor
             let editorContentChanged = newEditorContent /= editorContent
             let isMatch name = name `containsIgnoringCase` newEditorContent
-            let search getName = mapMaybe $ \item -> let name = getName item in if isMatch name then Just (name, item) else Nothing
+            let search getName getType = mapMaybe $ \item ->
+                    let label = createLabel (getName item) (getType item) in if isMatch label then Just (label, item) else Nothing
             let items = Vec.fromList $ case selected of
                     Expr _ -> fmap Expr <$> vars ++ primitives ++ defs ++ constructors where
-                        vars = fmap E.Var <$> search id (getVarsAtPath selectionPath (view expr def))
-                        primitives = fmap E.Primitive <$> search getDisplayName [minBound..]
-                        defs = fmap E.Def <$> search getCurrentExprName exprDefKeys
-                        constructors = fmap E.Constructor <$> search (view T.constructorName) constructorKeys
-                        constructorKeys = typeDefKeys >>= getConstructorKeys
-                        getConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getConstructorNames typeDefKey
-                        getConstructorNames typeDefKey = view T.dataConstructorName <$> getConstructors typeDefKey
-                        getConstructors typeDefKey = view T.dataConstructors $ currentTypeDefs Map.! typeDefKey
+                        vars = fmap E.Var <$> search id (const Nothing) (getVarsAtPath selectionPath (view expr def))
+                        primitives = fmap E.Primitive <$> search getDisplayName (Just . getType) [minBound..]
+                        defs = fmap E.Def <$> search getCurrentExprName (fmap nameTypeVars . getExprDefType) exprDefKeys
+                        constructors = fmap E.Constructor <$> search (view T.constructorName) getDataConstructorType dataConstructorKeys
                     Pattern _ -> do
                         typeDefKey <- typeDefKeys
-                        (name, T.DataConstructor constructorName paramTypes) <-
-                            search (view T.dataConstructorName) (view T.dataConstructors $ currentTypeDefs Map.! typeDefKey)
+                        T.DataConstructor constructorName paramTypes <- getDataConstructors typeDefKey
                         let constructorKey = T.DataConstructorKey typeDefKey constructorName
+                        let label = createDataConstructorLabel constructorKey
                         let arity = length paramTypes
                         let wildcards = replicate arity P.Wildcard
-                        return $ (name, Pattern $ P.Constructor constructorKey wildcards)
+                        [(label, Pattern $ P.Constructor constructorKey wildcards) | isMatch label]
             newAutocompleteList <- case maybeAutocompleteList of
                 Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
                 _ -> pure $ if null items then Nothing else Just $ ListWidget.list AutocompleteName items 1
@@ -993,6 +1006,17 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         where
             editorContent = head $ getEditContents editor
             typeDefKeys = getTypeDefKeys appState
+            getExprDefType key = preview (Infer._Typed . Infer.typeTreeRootType) $
+                createInferResult (currentTypeDefs Map.!) (view expr <$> currentExprDefs) key
+            getDataConstructorType = T.getDataConstructorType (currentTypeDefs Map.!)
+            dataConstructorKeys = typeDefKeys >>= getDataConstructorKeys
+            getDataConstructorKeys typeDefKey = T.DataConstructorKey typeDefKey <$> getDataConstructorNames typeDefKey
+            getDataConstructorNames typeDefKey = view T.dataConstructorName <$> getDataConstructors typeDefKey
+            getDataConstructors typeDefKey = view T.dataConstructors $ currentTypeDefs Map.! typeDefKey
+            createDataConstructorLabel key = createLabel (view T.constructorName key) (getDataConstructorType key)
+            createLabel name maybeType = case maybeType of
+                Just t -> name ++ ": " ++ printType appState t
+                Nothing -> name
     NotEditing -> case event of
         Vty.EvKey Vty.KEnter [] -> goToDefinition
         Vty.EvKey (Vty.KChar 'g') [] -> goBackInLocationHistory appState

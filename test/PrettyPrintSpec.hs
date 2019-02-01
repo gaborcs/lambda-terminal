@@ -1,7 +1,7 @@
-module PrettyPrintValueSpec where
+module PrettyPrintSpec where
 
 import Test.Hspec
-import PrettyPrintValue
+import PrettyPrint
 import qualified Value as V
 
 spec :: Spec

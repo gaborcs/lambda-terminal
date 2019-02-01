@@ -14,7 +14,10 @@ import qualified Pattern as P
 import qualified Type as T
 
 data InferResult d = Typed (TypeTree d) | Untyped (TypeError d) deriving Show
-data TypeTree d = TypeTree (T.Type TVarId d) [TypeTree d] deriving Show
+data TypeTree d = TypeTree
+    { _typeTreeRootType :: T.Type TVarId d
+    , _typeTreeChildren :: [TypeTree d]
+    } deriving Show
 data TypeError d = TypeError
     { _errorMsg :: String
     , _childResults :: [InferResult d]
@@ -39,6 +42,7 @@ type Substitution d = Map.Map TVarId (T.Type TVarId d)
 data InfiniteType = InfiniteType
 
 makePrisms ''InferResult
+makeLenses ''TypeTree
 makeLenses ''TypeError
 makePrisms ''IntermediateTree
 makeLenses ''TypedIntermediateTree
