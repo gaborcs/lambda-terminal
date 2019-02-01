@@ -314,12 +314,19 @@ renderExpandingSingleLineEditor editor = hLimit (textWidth editStr + 1) $ render
     editStr = head $ getEditContents editor
 
 renderAutocomplete :: (Ord n, Show n) => ListWidget.List n a -> (a -> Widget n) -> Extent n -> Widget n
-renderAutocomplete autocompleteList renderItem editorExtent = translateBy autocompleteOffset autocomplete where
-    autocompleteOffset = Brick.Types.Location (editorX, editorY + 1)
-    Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
-    autocomplete = hLimit 40 $ vLimit (min autocompleteListLength 5) $
-        ListWidget.renderList renderAutocompleteItem True $ renderItem <$> autocompleteList
-    autocompleteListLength = length $ ListWidget.listElements autocompleteList
+renderAutocomplete autocompleteList renderItem editorExtent = Widget Greedy Greedy $ do
+    ctx <- getContext
+    let autocompleteListLength = length $ ListWidget.listElements autocompleteList
+    let Brick.Types.Location (editorX, editorY) = extentUpperLeft editorExtent
+    let availableWidth = ctx ^. availWidthL - 1 -- using the last column seems to cause issues
+    let availableHeight = ctx ^. availHeightL
+    let autocompleteWidth = min availableWidth 40
+    let autocompleteHeight = min autocompleteListLength 5
+    let autocompleteX = if availableWidth < editorX + autocompleteWidth then availableWidth - autocompleteWidth else editorX
+    let autocompleteY = if availableHeight < editorY + 1 + autocompleteHeight then editorY - autocompleteHeight else editorY + 1
+    let autocompleteOffset = Brick.Types.Location (autocompleteX, autocompleteY)
+    let renderedList = ListWidget.renderList renderAutocompleteItem True $ renderItem <$> autocompleteList
+    render $ translateBy autocompleteOffset $ hLimit autocompleteWidth $ vLimit autocompleteHeight renderedList
 
 drawExprDefView :: AppState -> ExprDefViewLocation -> [AppWidget]
 drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
