@@ -395,12 +395,9 @@ renderExpr appState expr wrappingStyle (RenderChild renderChild) = case expr of
     E.Hole -> (OneWord, str "_")
     E.Def key -> (OneWord, str $ getExprName appState key)
     E.Var var -> (OneWord, str var)
-    E.Fn alternatives -> if null restOfAltResults then singleAltResult else multiAltResult where
-        singleAltResult = (firstAltResultType, str "λ " <+> firstAltWidget)
-        multiAltResult = (MultiLine, vBox $ str "λ " <+> firstAltWidget : map (str "| " <+>) restOfAltWidgets)
-        (firstAltResultType, firstAltWidget) NonEmpty.:| restOfAltResults =
-            NonEmpty.zipWith (renderAlternative appState $ RenderChild renderChild) (NonEmpty.fromList [0..]) alternatives
-        restOfAltWidgets = map snd restOfAltResults
+    E.Fn alternatives -> if length alternatives == 1 then NonEmpty.head altResults else (MultiLine, vBox altWidgets) where
+        altResults = NonEmpty.zipWith (renderAlternative appState $ RenderChild renderChild) (NonEmpty.fromList [0..]) alternatives
+        altWidgets = map snd $ NonEmpty.toList altResults
     E.Call callee arg -> case callee of
         E.Fn _ -> (MultiLine, renderedMatch) where
             renderedMatch =
@@ -433,9 +430,10 @@ inParensIf cond w = if cond then str "(" <+> w <+> str ")" else w
 renderAlternative :: AppState -> RenderChild -> Int -> Alternative -> RenderResult
 renderAlternative appState (RenderChild renderChild) alternativeIndex (patt, expr) =
     if exprResultType == MultiLine
-    then (MultiLine, renderedPattern <+> str " ->" <=> renderedExpr)
-    else (OneLine, renderedPattern <+> str " -> " <+> renderedExpr)
+    then (MultiLine, prefix <+> (renderedPattern <+> str " ->" <=> renderedExpr))
+    else (OneLine, prefix <+> renderedPattern <+> str " -> " <+> renderedExpr)
     where
+        prefix = str $ if alternativeIndex == 0 then "λ " else "| "
         (_, renderedPattern) = renderChild (2 * alternativeIndex) $ renderPattern patt
         (exprResultType, renderedExpr) = renderChild (2 * alternativeIndex + 1) $ renderExpr appState expr
 
