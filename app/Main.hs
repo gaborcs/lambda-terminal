@@ -97,7 +97,7 @@ type TypeError = Infer.TypeError TypeDefKey
 data AppResourceName = EditorName | AutocompleteName | DefListViewport | TypeDefViewport | ExprDefViewport
     deriving (Eq, Ord, Show)
 type AppWidget = Widget AppResourceName
-data WrappingStyle = NoParens | OneWordPerLine | Parens deriving (Eq, Enum, Bounded)
+data WrappingStyle = Parens | NoParens | OneWordPerLine deriving (Eq, Enum, Bounded)
 data Location = DefListView (Maybe SelectedDefKey) | TypeDefView TypeDefViewLocation | ExprDefView ExprDefViewLocation
 type SelectedDefKey = DefKey
 data DefKey = TypeDefKey TypeDefKey | ExprDefKey ExprDefKey deriving Eq
@@ -150,7 +150,7 @@ getInitialState = do
     let clipboard = Clipboard Nothing Nothing Nothing Nothing Nothing
     let defKeys = (TypeDefKey <$> Map.keys typeDefs) ++ (ExprDefKey <$> Map.keys exprDefs)
     let locationHistory = History.create $ DefListView $ listToMaybe defKeys
-    return $ AppState typeDefs exprDefs locationHistory NoParens clipboard NotEditing Nothing Nothing
+    return $ AppState typeDefs exprDefs locationHistory Parens clipboard NotEditing Nothing Nothing
 
 readTypeDefs :: IO (Map.Map TypeDefKey TypeDef)
 readTypeDefs = getTypeDefsPath >>= readDefs
