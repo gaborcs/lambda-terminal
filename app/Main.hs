@@ -207,18 +207,24 @@ drawDefListView appState maybeSelectedDefKey = [ title <=> body ] where
     title = renderTitle (str "Definitions")
     body = viewport DefListViewport Both list
     list = toGray $ vBox $ renderItem <$> getDefKeys appState
-    renderItem key = (if Just key == maybeSelectedDefKey then visible . highlight else id) (str $ getDefName appState key)
+    renderItem key = (if Just key == maybeSelectedDefKey then visible . highlight else id) (str $ getDefNameOrUnnamed appState key)
 
-getDefName :: AppState -> DefKey -> Name
-getDefName appState key = case key of
-    TypeDefKey k -> getTypeName appState k
-    ExprDefKey k -> getExprName appState k
+getDefNameOrUnnamed :: AppState -> DefKey -> Name
+getDefNameOrUnnamed appState key = case key of
+    TypeDefKey k -> getTypeNameOrUnnamed appState k
+    ExprDefKey k -> getExprNameOrUnnamed appState k
 
-getTypeName :: AppState -> TypeDefKey -> Name
-getTypeName appState key = fromMaybe "Unnamed" $ view (T.typeConstructor . T.typeConstructorName) $ getTypeDefs appState Map.! key
+getTypeNameOrUnnamed :: AppState -> TypeDefKey -> Name
+getTypeNameOrUnnamed appState key = fromMaybe "Unnamed" $ getTypeName appState key
 
-getExprName :: AppState -> ExprDefKey -> Name
-getExprName appState key = fromMaybe "unnamed" $ getExprDefs appState Map.! key ^. name
+getExprNameOrUnnamed :: AppState -> ExprDefKey -> Name
+getExprNameOrUnnamed appState key = fromMaybe "unnamed" $ getExprName appState key
+
+getTypeName :: AppState -> TypeDefKey -> Maybe Name
+getTypeName appState key = view (T.typeConstructor . T.typeConstructorName) $ getTypeDefs appState Map.! key
+
+getExprName :: AppState -> ExprDefKey -> Maybe Name
+getExprName appState key = getExprDefs appState Map.! key ^. name
 
 highlightIf :: Bool -> Widget n -> Widget n
 highlightIf cond = if cond then highlight else id
@@ -241,18 +247,18 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
         Naming editor -> highlight $ str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ hBox $ intersperse (str " ") renderedTitleWords
     renderedTitleWords = case view editState appState of
-        AddingTypeConstructorParam index editor -> str typeName : renderedParams where
+        AddingTypeConstructorParam index editor -> renderedTypeName : renderedParams where
             renderedParams = insertAt index (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
-        EditingTypeConstructorParam index editor -> str typeName : renderedParams where
+        EditingTypeConstructorParam index editor -> renderedTypeName : renderedParams where
             renderedParams = set (ix index) (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
-        RenamingTypeConstructorParam index _ editor -> str typeName : renderedParams where
+        RenamingTypeConstructorParam index _ editor -> renderedTypeName : renderedParams where
             renderedParams = set (ix index) (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
         _ -> renderedTypeName : renderedParams where
-            renderedTypeName = highlightIf (selection == TypeConstructorSelection Nothing) (str typeName)
+            renderedTypeName = highlightIf (selection == TypeConstructorSelection Nothing) renderedTypeName
             renderedParams = zipWith (highlightIf . isSelected) [0..] (str <$> typeConstructorParams)
             isSelected index =
                 selection == TypeConstructorSelection Nothing || selection == TypeConstructorSelection (Just index)
-    typeName = getTypeName appState typeDefKey
+    renderedTypeName = str $ getTypeNameOrUnnamed appState typeDefKey
     typeConstructorParams = view T.typeConstructorParams typeConstructor
     body = viewport TypeDefViewport Both $ vBox renderedDataConstructors
     renderedDataConstructors = zipWith renderDataConstructor [0..] dataConstructors
@@ -288,7 +294,7 @@ renderType appState t wrappingStyle (RenderChild renderChild) = case t of
     T.Var name -> (OneWord, str name)
     T.Call callee arg ->
         renderCall wrappingStyle (renderChild 0 $ renderType appState callee) (renderChild 1 $ renderType appState arg)
-    T.Constructor typeDefKey -> (OneWord, str $ getTypeName appState typeDefKey)
+    T.Constructor typeDefKey -> (OneWord, str $ getTypeNameOrUnnamed appState typeDefKey)
     T.Fn -> (OneWord, str "λ")
     T.Integer -> (OneWord, str "Integer")
     T.String -> (OneWord, str "String")
@@ -301,7 +307,7 @@ printType appState = snd . print where
         T.Call callee arg -> (OneLine, calleeResult ++ " " ++ PrettyPrint.inParensIf (argResultType /= OneWord) argResult) where
             (_, calleeResult) = print callee
             (argResultType, argResult) = print arg
-        T.Constructor typeDefKey -> (OneWord, getTypeName appState typeDefKey)
+        T.Constructor typeDefKey -> (OneWord, getTypeNameOrUnnamed appState typeDefKey)
         T.Fn -> (OneWord, "λ")
         T.Integer -> (OneWord, "Integer")
         T.String -> (OneWord, "String")
@@ -339,7 +345,7 @@ drawExprDefView appState (ExprDefViewLocation defKey selectionPath) = ui where
     mainLayer = renderedTitle <=> viewport ExprDefViewport Both coloredExpr <=> bottomStr
     renderedTitle = case editState of
         Naming editor -> str "Name: " <+> renderEditor (str . head) True editor
-        _ -> renderTitle $ str $ getExprName appState defKey
+        _ -> renderTitle $ str $ getExprNameOrUnnamed appState defKey
     coloredExpr = toGray renderedExpr -- unselected parts of the expression are gray
     def = getExprDefs appState Map.! defKey
     renderedExpr = snd $ renderWithAttrs wrappingStyle editorState (ContainsSelection selectionPath) maybeTypeError renderer
@@ -393,7 +399,7 @@ renderWithAttrs wrappingStyle maybeEditorState selection maybeTypeError renderer
 renderExpr :: AppState -> Expr -> Renderer
 renderExpr appState expr wrappingStyle (RenderChild renderChild) = case expr of
     E.Hole -> (OneWord, str "_")
-    E.Def key -> (OneWord, str $ getExprName appState key)
+    E.Def key -> (OneWord, str $ getExprNameOrUnnamed appState key)
     E.Var var -> (OneWord, str var)
     E.Fn alternatives -> if length alternatives == 1 then NonEmpty.head altResults else (MultiLine, vBox altWidgets) where
         altResults = NonEmpty.zipWith (renderAlternative appState $ RenderChild renderChild) (NonEmpty.fromList [0..]) alternatives
@@ -669,7 +675,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
             let isMatch name = name `containsIgnoringCase` newEditorContent
             let items = Vec.fromList $
                     filter (isMatch . show) [T.Integer, T.String]
-                    ++ (T.Constructor <$> filter (isMatch . getTypeName appState) typeDefKeys)
+                    ++ (T.Constructor <$> filter (maybe False isMatch . getTypeName appState) typeDefKeys)
                     ++ (T.Var <$> filter isMatch (T.getTypeVarsInTypeDef def))
             newAutocompleteList <- case maybeAutocompleteList of
                 Just autocompleteList | not editorContentChanged -> Just <$> ListWidget.handleListEvent event autocompleteList
@@ -775,7 +781,7 @@ handleEventOnTypeDefView appState event (TypeDefViewLocation typeDefKey selectio
                         T.Wildcard -> ""
                         T.Var var -> var
                         T.Call _ _ -> ""
-                        T.Constructor typeDefKey -> getTypeName appState typeDefKey
+                        T.Constructor typeDefKey -> getTypeNameOrUnnamed appState typeDefKey
                         T.Fn -> ""
                         T.Integer -> "Integer"
                         T.String -> "String"
@@ -988,14 +994,15 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
             let newEditorContent = head $ getEditContents newEditor
             let editorContentChanged = newEditorContent /= editorContent
             let isMatch name = name `containsIgnoringCase` newEditorContent
-            let search getName getType = mapMaybe $ \item ->
-                    let label = createLabel (getName item) (getType item) in if isMatch label then Just (label, item) else Nothing
+            let search getName getType = mapMaybe $ \item -> case getName item of
+                    Just name | isMatch label -> Just (label, item) where label = createLabel name (getType item)
+                    _ -> Nothing
             let items = Vec.fromList $ case selected of
                     Expr _ -> fmap Expr <$> vars ++ primitives ++ defs ++ constructors where
-                        vars = fmap E.Var <$> search id (const Nothing) (getVarsAtPath selectionPath (view expr def))
-                        primitives = fmap E.Primitive <$> search getDisplayName (Just . getType) [minBound..]
-                        defs = fmap E.Def <$> search getCurrentExprName (fmap nameTypeVars . getExprDefType) exprDefKeys
-                        constructors = fmap E.Constructor <$> search (view T.constructorName) getDataConstructorType dataConstructorKeys
+                        vars = fmap E.Var <$> search Just (const Nothing) (getVarsAtPath selectionPath (view expr def))
+                        primitives = fmap E.Primitive <$> search (Just . getDisplayName) (Just . getType) [minBound..]
+                        defs = fmap E.Def <$> search (getExprName appState) (fmap nameTypeVars . getExprDefType) exprDefKeys
+                        constructors = fmap E.Constructor <$> search (preview T.constructorName) getDataConstructorType dataConstructorKeys
                     Pattern _ -> do
                         typeDefKey <- typeDefKeys
                         T.DataConstructor constructorName paramTypes <- getDataConstructors typeDefKey
@@ -1058,7 +1065,6 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
         currentTypeDefs = getTypeDefs appState
         currentExprDefs = getExprDefs appState
         exprDefKeys = Map.keys currentExprDefs
-        getCurrentExprName = getExprName appState
         def = currentExprDefs Map.! defKey
         currentEditState = view editState appState
         selectParent = select parentPath
@@ -1107,7 +1113,7 @@ handleEventOnExprDefView appState event (ExprDefViewLocation defKey selectionPat
                 P.String s -> show s
             Expr e -> case e of
                 E.Hole -> ""
-                E.Def key -> getCurrentExprName key
+                E.Def key -> getExprNameOrUnnamed appState key
                 E.Var name -> name
                 E.Fn _ -> ""
                 E.Call _ _ -> ""
