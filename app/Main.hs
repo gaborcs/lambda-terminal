@@ -247,18 +247,18 @@ drawTypeDefView appState (TypeDefViewLocation typeDefKey selection) = ui where
         Naming editor -> highlight $ str "Name: " <+> renderEditor (str . head) True editor
         _ -> renderTitle $ hBox $ intersperse (str " ") renderedTitleWords
     renderedTitleWords = case view editState appState of
-        AddingTypeConstructorParam index editor -> renderedTypeName : renderedParams where
+        AddingTypeConstructorParam index editor -> str typeNameOrUnnamed : renderedParams where
             renderedParams = insertAt index (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
-        EditingTypeConstructorParam index editor -> renderedTypeName : renderedParams where
+        EditingTypeConstructorParam index editor -> str typeNameOrUnnamed : renderedParams where
             renderedParams = set (ix index) (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
-        RenamingTypeConstructorParam index _ editor -> renderedTypeName : renderedParams where
+        RenamingTypeConstructorParam index _ editor -> str typeNameOrUnnamed : renderedParams where
             renderedParams = set (ix index) (highlight $ renderExpandingSingleLineEditor editor) (str <$> typeConstructorParams)
         _ -> renderedTypeName : renderedParams where
-            renderedTypeName = highlightIf (selection == TypeConstructorSelection Nothing) renderedTypeName
+            renderedTypeName = highlightIf (selection == TypeConstructorSelection Nothing) (str typeNameOrUnnamed)
             renderedParams = zipWith (highlightIf . isSelected) [0..] (str <$> typeConstructorParams)
             isSelected index =
                 selection == TypeConstructorSelection Nothing || selection == TypeConstructorSelection (Just index)
-    renderedTypeName = str $ getTypeNameOrUnnamed appState typeDefKey
+    typeNameOrUnnamed = getTypeNameOrUnnamed appState typeDefKey
     typeConstructorParams = view T.typeConstructorParams typeConstructor
     body = viewport TypeDefViewport Both $ vBox renderedDataConstructors
     renderedDataConstructors = zipWith renderDataConstructor [0..] dataConstructors
