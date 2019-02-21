@@ -10,6 +10,8 @@ This enables a very different way of editing code.
 Instead of using a regular text editor, you use an editor designed for Lambda, which is able to take advantage of the language design.
 For example, when you view an expression definition in the editor, you can select any of its subexpressions to see their type for a better understanding of how things fit together.
 
+If you haven't yet, check out the [intro video](http://lambdalang.org).
+
 ## What is Lambda Terminal?
 
 Lambda Terminal is an editor for Lambda.
