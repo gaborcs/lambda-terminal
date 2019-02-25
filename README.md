@@ -10,7 +10,7 @@ This enables a very different way of editing code.
 Instead of using a regular text editor, you use an editor designed for Lambda, which is able to take advantage of the language design.
 For example, when you view an expression definition in the editor, you can select any of its subexpressions to see their type for a better understanding of how things fit together.
 
-If you haven't yet, check out the [intro video](http://lambdalang.org).
+If you haven't yet, check out the [intro video](https://youtu.be/ccZODI0e334).
 
 ## What is Lambda Terminal?
 
@@ -30,7 +30,10 @@ But for now we'll keep things simple and stick with the terminal.
 
 ## Is it ready for production?
 
-No. There are lots of rough edges and missing features. Also, we don't intend to maintain backwards compatibility at this point.
+No.
+There are lots of rough edges and missing features.
+Performance is not a priority and we don't intend to maintain backwards compatibility.
+For now, we just want to test whether this way of editing code leads to better developer experience without spending too much time trying to achieve the perfect implementation.
 
 ## So why should I learn it?
 
@@ -153,12 +156,7 @@ This might be weird at first, but it has a couple of advantages:
 
 Alright, what about more complex arithmetic expressions?
 How about `1 + 2 * 3`?
-That would look something like `+ 1 (* 2 3)` in Lambda.
-Or, if we use the default wrapping style, the parentheses will be replaced by wrapping:
-```
-+ 1
-  * 2 3
-```
+That would be `+ 1 (* 2 3)` in Lambda.
 Let's input that expression now.
 If you already have `+ 1 2`, the easiest way is to select `2`, apply `*` to it, then select `* 2` and call it with `3`.
 By now you should be able to do all of these steps except for applying `*` to the selection.
@@ -167,7 +165,8 @@ So if `2` is selected, press `(`, type `*`, then press `Tab`.
 When you're done with all the steps, you can select the whole expression and see that the result of evaluating it is 7.
 
 This would be a good time to try cycling between wrapping styles using `Tab`. It shows that there are multiple ways to render expressions in Lambda.
-It's the renderer's job to render expressions the best way it can, taking into account the user's preferences.
+The default style primarily uses parentheses to group things together because that's what most of us are used to from other languages.
+However, if you ever feel overwhelmed by the number of parentheses or the length of lines, feel free to switch to one of the other styles.
 
 Alright, now that you've seen the basics, let's write something useful.
 In the next sections, we'll learn more about the language by defining some useful functions and types.
@@ -233,7 +232,7 @@ The factorial function can be defined the following way in mathematics:
 n! = n * (n - 1)!, if n > 0
 ```
 
-The definition in Lambda is very similar to the above (shown with parentheses this time for easier comparison):
+The definition in Lambda is very similar to the above:
 ```
 λ 0 -> 1
 | n -> * n (factorial (- n 1))
@@ -250,14 +249,6 @@ To enter the above definition, start with an empty expression definition and nam
 Then you can press `e`, then `\`, enter `0` and then `1` to obtain `λ 0 -> 1`.
 To add an alternative, you need to press `|`.
 Now you can enter the above using the usual input methods.
-Don't worry if instead of parentheses you see wrapping, it would be formatted the following way with the default wrapping style:
-```
-λ 0 -> 1
-| n ->
-  * n
-    factorial
-      - n 1
-```
 
 When you're done, open a new definition and call the `factorial` function with a non-negative integer.
 It should work as expected for all non-negative integers.
@@ -318,10 +309,7 @@ We'll do the same here.
 The result will be whether the difference of the two arguments is zero.
 Please input the following using the usual editing commands:
 ```
-λ n ->
-  λ m ->
-    isZero
-      - n m
+λ n -> λ m -> isZero (- n m)
 ```
 
 ## `isNegative`
@@ -329,9 +317,7 @@ Now we can write `isNegative`.
 We'll need to check if the signum of the number is -1.
 Open a new expression definition, name it `isNegative`, and input this expression:
 ```
-λ n ->
-  equal -1
-    signum n
+λ n -> equal -1 (signum n)
 ```
 
 Okay, we've written a couple of `Bool`-producing functions.
@@ -361,13 +347,17 @@ In Lambda, we can define an `if` function that takes these as arguments and retu
 The `match` in the middle is not a function.
 It means that the function below is called with `condition`.
 So if `condition` matches `True`, it will return the `then` argument, otherwise it will return the `else` argument.
-You can input in by starting with `condition`, then pressing `(` to apply a function to it, then pressing `\`.
+You can input it by starting with `condition`, then pressing `(` to apply a function to it, then pressing `\`.
 As you press `\`, the editor will shift to this style of displaying the call.
 This style resembles `match`/`case` expressions from some other languages, and it should make things pretty readable.
 
-In most languages, calling a function requires evaluating all of its arguments.
-That means `if` cannot be a function, because we want to avoid evaluating both of its branches.
-Lambda is different, as it uses lazy evaluation, so only the appropriate branch will be evaluated.
+Once you input the above expression and select all of it, you should see that it has type `λ Bool (λ a (λ a a))`.
+The condition obviously has type `Bool`, but what about all those `a` types?
+`a` is a type variable, so you can substitute any type for `a`, but it has to be the same type for all 3 instances of `a` in the type of `if`.
+To make sure you understand this, try calling `if` with arguments of various types.
+
+In case you're wondering whether `if` could be a function in other languages, the answer is no for languages where calling a function requires evaluating all of its arguments, since we want to avoid evaluating both branches of `if` expressions.
+As opposed to most languages, Lambda uses lazy evaluation, so only the appropriate branch will be evaluated.
 
 ## `OptionalInteger`
 
@@ -390,13 +380,10 @@ As `Just` is selected, press `>` to give it a parameter, start typing `Integer`,
 We now have everything we need to define a safe factorial function.
 Open a new expression definition and name it `safeFactorial`, then input the following:
 ```
-λ n ->
-  if
-    isNegative n
-    Nothing
-    Just
-      factorial n
+λ n -> if (isNegative n) Nothing (Just (factorial n))
 ```
+
+If you now try calling `safeFactorial` with a negative number, it should return Nothing instead of evaluating forever.
 
 ## `Optional`
 `OptionalInteger` is nice, but do we want to define an optional type for each type we need?
