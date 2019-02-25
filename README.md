@@ -149,8 +149,8 @@ If you select all of it, you'll see that its result is `3` and its type is `Inte
 In most languages you would write `1 + 2` instead of `+ 1 2`, but Lambda is different.
 Arithmetic operators in Lambda are regular functions, and functions are displayed before the argument they are called with.
 This might be weird at first, but it has a couple of advantages:
-- You don't need to apply both arguments to a binary operator, you can get useful functions by applying only one: `+ 1` is a function that returns its argument incremented by `1`, `* 2` is a function that returns its argument multiplied by `2`.
-- Functions can be passed to other functions. For example, you could pass `* 2` to a function that maps it over every element of a list. We'll see examples of this later.
+- You can use `+` without arguments, or with only one argument applied. `+ 1` is a function that returns its argument incremented by `1`, `* 2` is a function that returns its argument multiplied by `2`.
+- Functions can be passed to other functions. For example, you could pass `* 2` to a function that maps it over every element of a list. We'll see this later.
 - You don't need to think about precedence rules. All functions have the same precedence.
 - The language is simpler.
 
@@ -279,6 +279,13 @@ Now we have a type definition whose type constructor is named `Bool` and has no 
 It also has no data constructors, which means we cannot create a value that has this type.
 Let's add two data constructors, `True` and `False`, without arguments.
 Press `a`, enter `True`, then press `Enter`, then do the same for `False`.
+You should now see something like this:
+
+```
+──────────  Bool  ──────────
+True
+False
+```
 Now we have an appropriate boolean type, we can start writing functions for it.
 
 ## `isZero`
@@ -375,6 +382,12 @@ Because we can define it ourselves, obviously.
 Press `O` to open a new type definition, then `N` and name it `OptionalInteger`.
 Press `a` and add a data constructor called Nothing, then press `a` again to add one called `Just`.
 As `Just` is selected, press `>` to give it a parameter, start typing `Integer`, then press `Tab` to choose it from the autocomplete.
+The resulting type should look like this:
+```
+──────────  OptionalInteger  ──────────
+Nothing                       
+Just Integer
+```
 
 ## `safeFactorial`
 We now have everything we need to define a safe factorial function.
@@ -398,10 +411,58 @@ Press `N` to rename it to `Optional`.
 Make sure the type constructor (`Optional`) is selected, then press `>`, type `a` and press `Enter` to give it a parameter called `a`.
 If you're done, select `Integer` (the parameter of `Just`) and press `e` to edit it.
 Replace `Integer` with `a` and press `Enter`.
+The resulting type should be:
+```
+──────────  Optional a  ──────────
+Nothing
+Just a
+```
 
-Now `Optional` type can be used for any type, not only `Integer`.
+Now the `Optional` type can be used to wrap any type, not only `Integer`.
 Press `G` to go forward until you reach `safeFactorial`, and observe that its type is now `λ Integer (Optional Integer)`.
 We don't need to change anything, because the changes we made to the original `OptionalInteger` type didn't break anything, they just made the type useful in more situations.
+
+## `List`
+To see an example of a more complex type, we will define the `List` type.
+Open a new type definition, then name it `List` and give it a parameter called `a`.
+Add a data constructor called `Nil`, which will represent the empty list, then add another data constructor called `Cons`, which will be used to prepend an element to an existing list.
+When you have `Cons`, press `>`, type `a` and press `Enter`, then press `>` again, type `List` and press `Tab`, then press `)`, type `a` and press `Enter`.
+The resulting type should be:
+```
+──────────  List a  ──────────
+Nil
+Cons a (List a)
+```
+
+Using this representation, a list containing the numbers 1, 2 and 3 would look like the following:
+```
+Cons 1 (Cons 2 (Cons 3 Nil))
+```
+
+To see how the `List` type can be used, we'll write two pretty useful functions.
+
+## `length`
+Open a new expression definition and name it `length`, then enter the following:
+```
+λ Nil -> 0
+| Cons _ xs -> + 1 (length xs)
+```
+
+The length of the empty list is 0, and the length of any other list is one more than the length of the list without its first element.
+If you're done entering the above function, try calling `length (Cons 1 (Cons 2 (Cons 3 Nil)))`, the result should be 3.
+
+## `map`
+`map` is a higher-order function that takes a function and maps it over every element of a list.
+Open a new expression definition and name it `map`, then enter the following:
+```
+λ f ->
+  λ Nil -> Nil
+  | Cons x xs -> Cons (f x) (map f xs)
+```
+
+To use the function, you could try `map square (Cons 1 (Cons 2 (Cons 3 Nil)))`.
+Or, do you remember when we claimed that one of the advantages of arithmetic operators being regular functions is that you can do things like map `* 2` over the elements of a list?
+Well, here's how to do it: `map (* 2) (Cons 1 (Cons 2 (Cons 3 Nil)))`.
 
 ## Conclusion
 In this tutorial, we went through the basics of Lambda.
