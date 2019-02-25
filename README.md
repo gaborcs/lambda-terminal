@@ -435,9 +435,10 @@ Cons a (List a)
 ```
 
 Using this representation, a list containing the numbers 1, 2 and 3 would look like the following:
-```
-Cons 1 (Cons 2 (Cons 3 Nil))
-```
+`Cons 1 (Cons 2 (Cons 3 Nil))`
+
+Some languages provide much more concise syntax for lists, such as `[1, 2, 3]`.
+Such syntax may be supported in a future version of Lambda, but for now this section shows how a list type can be defined and used without any special syntax.
 
 To see how the `List` type can be used, we'll write two pretty useful functions.
 
