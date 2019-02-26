@@ -1,4 +1,4 @@
-# Tutorial: Intro to Lambda (draft)
+# Tutorial: Intro to Lambda
 
 Welcome to Lambda land.
 
