@@ -204,7 +204,7 @@ We'll learn a new language construct to achieve what we want.
 
 Let's start with an empty expression definition, so either open a new one or delete everything in the current one.
 To insert a function, you should press `λ`.
-Or, in case your keyboard doesn't have our favourite character yet, you can use `\` instead.
+Or, in case your keyboard doesn't have our favorite character yet, you can use `\` instead.
 You should see a `λ` appear, followed by a cursor, then an arrow, and finally a typed hole.
 Now you need to input the name of the function's parameter.
 Type `n`, then press `Enter`.
