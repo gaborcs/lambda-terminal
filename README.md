@@ -203,7 +203,8 @@ No, we can't.
 We'll learn a new language construct to achieve what we want.
 
 Let's start with an empty expression definition, so either open a new one or delete everything in the current one.
-Press `e` to edit, then `\` to insert a function.
+To insert a function, you should press `λ`.
+Or, in case your keyboard doesn't have our favourite character yet, you can use `\` instead.
 You should see a `λ` appear, followed by a cursor, then an arrow, and finally a typed hole.
 Now you need to input the name of the function's parameter.
 Type `n`, then press `Enter`.
@@ -246,7 +247,7 @@ We've introduced two new concepts in this example:
 - Recursion: The `factorial` function calls itself in one of the alternatives, so it is a recursive function.
 
 To enter the above definition, start with an empty expression definition and name it `factorial`.
-Then you can press `e`, then `\`, enter `0` and then `1` to obtain `λ 0 -> 1`.
+Then you can press `\`, enter `0` and then `1` to obtain `λ 0 -> 1`.
 To add an alternative, you need to press `|`.
 Now you can enter the above using the usual input methods.
 
